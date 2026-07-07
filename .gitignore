@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Go
+*.exe
+*.test
+*.out
+bin/
