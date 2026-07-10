@@ -1,12 +1,9 @@
-# macOS
 .DS_Store
-
-# IDE
 .idea/
-.vscode/
 
-# Go
-*.exe
+.env
+
 *.test
 *.out
 bin/
+coverage.out
