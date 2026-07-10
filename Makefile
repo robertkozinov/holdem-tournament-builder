@@ -15,3 +15,6 @@ migrate-test-down:
 
 test-storage:
 	go test ./internal/storage/postgres -v
+
+run:
+	go run ./cmd/server
