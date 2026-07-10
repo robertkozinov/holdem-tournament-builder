@@ -7,13 +7,15 @@ import (
 	"holdem-tournament-builder/internal/domain"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type TournamentRepository interface {
-	Create(ctx context.Context, tournament *domain.Tournament) (int64, error)
-	GetByID(ctx context.Context, id int64) (*domain.Tournament, error)
+	Create(ctx context.Context, tournament *domain.Tournament) (uuid.UUID, error)
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error)
 	Update(ctx context.Context, tournament *domain.Tournament) error
-	Delete(ctx context.Context, id int64) error
+	Delete(ctx context.Context, id uuid.UUID) error
 }
 
 type TournamentService struct {
@@ -34,22 +36,22 @@ func (s *TournamentService) CreateTournament(ctx context.Context, name string,
 	stack domain.StackPlan,
 	blinds []domain.BlindLevel,
 	payouts []domain.PayoutSpot,
-) (int64, error) {
+) (uuid.UUID, error) {
 	tr, err := domain.NewTournament(name, date, players, buyInAmount, chips, rebuyRules, duration, stack, blinds, payouts)
 	if err != nil {
-		return 0, fmt.Errorf("build tournament: %w", err)
+		return uuid.Nil, fmt.Errorf("build tournament: %w", err)
 	}
 
 	id, err := s.repo.Create(ctx, tr)
 	if err != nil {
-		return 0, fmt.Errorf("create tournament: %w", err)
+		return uuid.Nil, fmt.Errorf("create tournament: %w", err)
 	}
 
 	return id, nil
 }
 
-func (s *TournamentService) GetTournamentByID(ctx context.Context, id int64) (*domain.Tournament, error) {
-	if id <= 0 {
+func (s *TournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
+	if id == uuid.Nil {
 		return nil, app.ErrInvalidTournamentID
 	}
 
@@ -61,8 +63,8 @@ func (s *TournamentService) GetTournamentByID(ctx context.Context, id int64) (*d
 	return tr, nil
 }
 
-func (s *TournamentService) DeleteTournament(ctx context.Context, id int64) error {
-	if id <= 0 {
+func (s *TournamentService) DeleteTournament(ctx context.Context, id uuid.UUID) error {
+	if id == uuid.Nil {
 		return app.ErrInvalidTournamentID
 	}
 
@@ -73,7 +75,7 @@ func (s *TournamentService) DeleteTournament(ctx context.Context, id int64) erro
 	return nil
 }
 
-func (s *TournamentService) StartTournament(ctx context.Context, id int64, now time.Time) error {
+func (s *TournamentService) StartTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
 	tr, err := s.GetTournamentByID(ctx, id)
 	if err != nil {
 		return err
@@ -90,7 +92,7 @@ func (s *TournamentService) StartTournament(ctx context.Context, id int64, now t
 	return nil
 }
 
-func (s *TournamentService) PauseTournament(ctx context.Context, id int64, now time.Time) error {
+func (s *TournamentService) PauseTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
 	tr, err := s.GetTournamentByID(ctx, id)
 	if err != nil {
 		return err
@@ -107,7 +109,7 @@ func (s *TournamentService) PauseTournament(ctx context.Context, id int64, now t
 	return nil
 }
 
-func (s *TournamentService) ResumeTournament(ctx context.Context, id int64, now time.Time) error {
+func (s *TournamentService) ResumeTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
 	tr, err := s.GetTournamentByID(ctx, id)
 	if err != nil {
 		return err
@@ -124,7 +126,7 @@ func (s *TournamentService) ResumeTournament(ctx context.Context, id int64, now 
 	return nil
 }
 
-func (s *TournamentService) FinishTournament(ctx context.Context, id int64) error {
+func (s *TournamentService) FinishTournament(ctx context.Context, id uuid.UUID) error {
 	tr, err := s.GetTournamentByID(ctx, id)
 	if err != nil {
 		return err
@@ -141,7 +143,7 @@ func (s *TournamentService) FinishTournament(ctx context.Context, id int64) erro
 	return nil
 }
 
-func (s *TournamentService) LevelUpTournament(ctx context.Context, id int64, now time.Time) error {
+func (s *TournamentService) LevelUpTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
 	tr, err := s.GetTournamentByID(ctx, id)
 	if err != nil {
 		return err
@@ -158,7 +160,7 @@ func (s *TournamentService) LevelUpTournament(ctx context.Context, id int64, now
 	return nil
 }
 
-func (s *TournamentService) AddRebuy(ctx context.Context, id int64, playerName string) error {
+func (s *TournamentService) AddRebuy(ctx context.Context, id uuid.UUID, playerName string) error {
 	playerName = strings.TrimSpace(playerName)
 	if playerName == "" {
 		return app.ErrInvalidPlayerName
@@ -180,7 +182,7 @@ func (s *TournamentService) AddRebuy(ctx context.Context, id int64, playerName s
 	return nil
 }
 
-func (s *TournamentService) KnockoutPlayer(ctx context.Context, id int64, playerName string) error {
+func (s *TournamentService) KnockoutPlayer(ctx context.Context, id uuid.UUID, playerName string) error {
 	playerName = strings.TrimSpace(playerName)
 	if playerName == "" {
 		return app.ErrInvalidPlayerName

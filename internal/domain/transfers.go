@@ -30,7 +30,7 @@ func minimizeTransfers(balances map[string]int64) []Transfer {
 	for name, b := range balances {
 		switch {
 		case b < 0:
-			debtors = append(debtors, balance{name, -b}) // долг как положительное
+			debtors = append(debtors, balance{name, -b})
 		case b > 0:
 			creditors = append(creditors, balance{name, b})
 		}

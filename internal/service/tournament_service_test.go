@@ -8,23 +8,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+var testTournamentID = uuid.MustParse("00000000-0000-0000-0000-000000000010")
+
 type mockTournamentRepository struct {
 	createCalled      bool
 	createdTournament *domain.Tournament
-	createID          int64
+	createID          uuid.UUID
 	createErr         error
 
 	getCalled     bool
-	getID         int64
+	getID         uuid.UUID
 	getTournament *domain.Tournament
 	getErr        error
 
 	deleteCalled bool
-	deleteID     int64
+	deleteID     uuid.UUID
 	deleteErr    error
 
 	updateCalled      bool
@@ -32,18 +35,18 @@ type mockTournamentRepository struct {
 	updateErr         error
 }
 
-func (r *mockTournamentRepository) Create(ctx context.Context, tournament *domain.Tournament) (int64, error) {
+func (r *mockTournamentRepository) Create(ctx context.Context, tournament *domain.Tournament) (uuid.UUID, error) {
 	r.createCalled = true
 	r.createdTournament = tournament
 
 	if r.createErr != nil {
-		return 0, r.createErr
+		return uuid.Nil, r.createErr
 	}
 
 	return r.createID, nil
 }
 
-func (r *mockTournamentRepository) GetByID(ctx context.Context, id int64) (*domain.Tournament, error) {
+func (r *mockTournamentRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
 	r.getCalled = true
 	r.getID = id
 
@@ -65,7 +68,7 @@ func (r *mockTournamentRepository) Update(ctx context.Context, tournament *domai
 	return nil
 }
 
-func (r *mockTournamentRepository) Delete(ctx context.Context, id int64) error {
+func (r *mockTournamentRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	r.deleteCalled = true
 	r.deleteID = id
 
@@ -104,7 +107,7 @@ func validCreateTournamentInput() createTournamentInput {
 	}
 }
 
-func createTournament(service *TournamentService, input createTournamentInput) (int64, error) {
+func createTournament(service *TournamentService, input createTournamentInput) (uuid.UUID, error) {
 	return service.CreateTournament(
 		context.Background(),
 		input.name,
@@ -122,7 +125,7 @@ func createTournament(service *TournamentService, input createTournamentInput) (
 
 func tournamentWithStatus(status domain.Status) *domain.Tournament {
 	return &domain.Tournament{
-		ID:     10,
+		ID:     testTournamentID,
 		Name:   "Friday Game",
 		Status: status,
 	}
@@ -130,20 +133,20 @@ func tournamentWithStatus(status domain.Status) *domain.Tournament {
 
 func TestTournamentService_CreateTournament(t *testing.T) {
 	t.Run("creates tournament", func(t *testing.T) {
-		repo := &mockTournamentRepository{createID: 10}
+		repo := &mockTournamentRepository{createID: testTournamentID}
 		service := NewTournamentService(repo)
 
 		id, err := createTournament(service, validCreateTournamentInput())
 
 		require.NoError(t, err)
-		assert.Equal(t, int64(10), id)
+		assert.Equal(t, testTournamentID, id)
 		assert.True(t, repo.createCalled)
 		require.NotNil(t, repo.createdTournament)
 		assert.Equal(t, "Friday Game", repo.createdTournament.Name)
 	})
 
 	t.Run("returns error when tournament is invalid", func(t *testing.T) {
-		repo := &mockTournamentRepository{createID: 10}
+		repo := &mockTournamentRepository{createID: testTournamentID}
 		service := NewTournamentService(repo)
 
 		input := validCreateTournamentInput()
@@ -151,7 +154,7 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 
 		id, err := createTournament(service, input)
 
-		assert.Equal(t, int64(0), id)
+		assert.Equal(t, uuid.Nil, id)
 		assert.ErrorIs(t, err, domain.ErrEmptyName)
 		assert.False(t, repo.createCalled)
 	})
@@ -159,14 +162,14 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 	t.Run("returns error when repository create fails", func(t *testing.T) {
 		repoErr := errors.New("repo error")
 		repo := &mockTournamentRepository{
-			createID:  10,
+			createID:  testTournamentID,
 			createErr: repoErr,
 		}
 		service := NewTournamentService(repo)
 
 		id, err := createTournament(service, validCreateTournamentInput())
 
-		assert.Equal(t, int64(0), id)
+		assert.Equal(t, uuid.Nil, id)
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.createCalled)
 	})
@@ -174,23 +177,23 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 
 func TestTournamentService_GetTournamentByID(t *testing.T) {
 	t.Run("gets tournament", func(t *testing.T) {
-		wantTr := &domain.Tournament{ID: 10, Name: "Friday game"}
+		wantTr := &domain.Tournament{ID: testTournamentID, Name: "Friday game"}
 		repo := &mockTournamentRepository{getTournament: wantTr}
 		service := NewTournamentService(repo)
 
-		got, err := service.GetTournamentByID(context.Background(), 10)
+		got, err := service.GetTournamentByID(context.Background(), testTournamentID)
 
 		require.NoError(t, err)
 		assert.Same(t, wantTr, got)
 		assert.True(t, repo.getCalled)
-		assert.Equal(t, int64(10), repo.getID)
+		assert.Equal(t, testTournamentID, repo.getID)
 	})
 
 	t.Run("returns error when id is invalid", func(t *testing.T) {
 		repo := &mockTournamentRepository{}
 		service := NewTournamentService(repo)
 
-		got, err := service.GetTournamentByID(context.Background(), -1)
+		got, err := service.GetTournamentByID(context.Background(), uuid.Nil)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, app.ErrInvalidTournamentID)
@@ -203,7 +206,7 @@ func TestTournamentService_GetTournamentByID(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		got, err := service.GetTournamentByID(context.Background(), 10)
+		got, err := service.GetTournamentByID(context.Background(), testTournamentID)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, repoErr)
@@ -217,17 +220,17 @@ func TestTournamentService_DeleteTournament(t *testing.T) {
 		repo := &mockTournamentRepository{}
 		service := NewTournamentService(repo)
 
-		err := service.DeleteTournament(context.Background(), 10)
+		err := service.DeleteTournament(context.Background(), testTournamentID)
 
 		require.NoError(t, err)
 		assert.True(t, repo.deleteCalled)
-		assert.Equal(t, int64(10), repo.deleteID)
+		assert.Equal(t, testTournamentID, repo.deleteID)
 	})
 	t.Run("returns error when id is invalid", func(t *testing.T) {
 		repo := &mockTournamentRepository{}
 		service := NewTournamentService(repo)
 
-		err := service.DeleteTournament(context.Background(), -1)
+		err := service.DeleteTournament(context.Background(), uuid.Nil)
 
 		assert.ErrorIs(t, err, app.ErrInvalidTournamentID)
 		assert.False(t, repo.deleteCalled)
@@ -237,11 +240,11 @@ func TestTournamentService_DeleteTournament(t *testing.T) {
 		repo := &mockTournamentRepository{deleteErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.DeleteTournament(context.Background(), 10)
+		err := service.DeleteTournament(context.Background(), testTournamentID)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.deleteCalled)
-		assert.Equal(t, int64(10), repo.deleteID)
+		assert.Equal(t, testTournamentID, repo.deleteID)
 	})
 }
 
@@ -253,11 +256,11 @@ func TestTournamentService_StartTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.StartTournament(context.Background(), 10, now)
+		err := service.StartTournament(context.Background(), testTournamentID, now)
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
-		assert.Equal(t, int64(10), repo.getID)
+		assert.Equal(t, testTournamentID, repo.getID)
 		assert.True(t, repo.updateCalled)
 		require.NotNil(t, repo.updatedTournament)
 		assert.Equal(t, domain.StatusRunning, repo.updatedTournament.Status)
@@ -269,7 +272,7 @@ func TestTournamentService_StartTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.StartTournament(context.Background(), 10, now)
+		err := service.StartTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -281,7 +284,7 @@ func TestTournamentService_StartTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.StartTournament(context.Background(), 10, now)
+		err := service.StartTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, domain.ErrIncorrectStatus)
 		assert.True(t, repo.getCalled)
@@ -294,7 +297,7 @@ func TestTournamentService_StartTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.StartTournament(context.Background(), 10, now)
+		err := service.StartTournament(context.Background(), testTournamentID, now)
 
 		require.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -310,11 +313,11 @@ func TestTournamentService_PauseTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.PauseTournament(context.Background(), 10, now)
+		err := service.PauseTournament(context.Background(), testTournamentID, now)
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
-		assert.Equal(t, int64(10), repo.getID)
+		assert.Equal(t, testTournamentID, repo.getID)
 		assert.True(t, repo.updateCalled)
 		require.NotNil(t, repo.updatedTournament)
 		assert.Equal(t, domain.StatusPaused, repo.updatedTournament.Status)
@@ -326,7 +329,7 @@ func TestTournamentService_PauseTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.PauseTournament(context.Background(), 10, now)
+		err := service.PauseTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -338,7 +341,7 @@ func TestTournamentService_PauseTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.PauseTournament(context.Background(), 10, now)
+		err := service.PauseTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, domain.ErrIncorrectStatus)
 		assert.True(t, repo.getCalled)
@@ -351,7 +354,7 @@ func TestTournamentService_PauseTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.PauseTournament(context.Background(), 10, now)
+		err := service.PauseTournament(context.Background(), testTournamentID, now)
 
 		require.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -373,11 +376,11 @@ func TestTournamentService_ResumeTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.ResumeTournament(context.Background(), 10, now)
+		err := service.ResumeTournament(context.Background(), testTournamentID, now)
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
-		assert.Equal(t, int64(10), repo.getID)
+		assert.Equal(t, testTournamentID, repo.getID)
 		assert.True(t, repo.updateCalled)
 		require.NotNil(t, repo.updatedTournament)
 		assert.Equal(t, domain.StatusRunning, repo.updatedTournament.Status)
@@ -389,7 +392,7 @@ func TestTournamentService_ResumeTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.ResumeTournament(context.Background(), 10, now)
+		err := service.ResumeTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -401,7 +404,7 @@ func TestTournamentService_ResumeTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.ResumeTournament(context.Background(), 10, now)
+		err := service.ResumeTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, domain.ErrIncorrectStatus)
 		assert.True(t, repo.getCalled)
@@ -421,7 +424,7 @@ func TestTournamentService_ResumeTournament(t *testing.T) {
 		}
 		service := NewTournamentService(repo)
 
-		err := service.ResumeTournament(context.Background(), 10, now)
+		err := service.ResumeTournament(context.Background(), testTournamentID, now)
 
 		require.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -431,7 +434,7 @@ func TestTournamentService_ResumeTournament(t *testing.T) {
 
 func runningTournamentWithBlinds() *domain.Tournament {
 	return &domain.Tournament{
-		ID:           10,
+		ID:           testTournamentID,
 		Name:         "Friday Game",
 		Status:       domain.StatusRunning,
 		CurrentLevel: 0,
@@ -450,11 +453,11 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.LevelUpTournament(context.Background(), 10, now)
+		err := service.LevelUpTournament(context.Background(), testTournamentID, now)
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
-		assert.Equal(t, int64(10), repo.getID)
+		assert.Equal(t, testTournamentID, repo.getID)
 		assert.True(t, repo.updateCalled)
 		require.NotNil(t, repo.updatedTournament)
 		assert.Equal(t, 1, repo.updatedTournament.CurrentLevel)
@@ -466,7 +469,7 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.LevelUpTournament(context.Background(), 10, now)
+		err := service.LevelUpTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -480,7 +483,7 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.LevelUpTournament(context.Background(), 10, now)
+		err := service.LevelUpTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, domain.ErrMaxBlindLevel)
 		assert.True(t, repo.getCalled)
@@ -493,7 +496,7 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.LevelUpTournament(context.Background(), 10, now)
+		err := service.LevelUpTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -503,7 +506,7 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 
 func runningTournamentWithRebuy() *domain.Tournament {
 	return &domain.Tournament{
-		ID:          10,
+		ID:          testTournamentID,
 		Name:        "Friday Game",
 		Status:      domain.StatusRunning,
 		Players:     []string{"A", "B"},
@@ -522,7 +525,7 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), 10, "A")
+		err := service.AddRebuy(context.Background(), testTournamentID, "A")
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
@@ -535,7 +538,7 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 		repo := &mockTournamentRepository{}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), 10, "   ")
+		err := service.AddRebuy(context.Background(), testTournamentID, "   ")
 
 		assert.ErrorIs(t, err, app.ErrInvalidPlayerName)
 		assert.False(t, repo.getCalled)
@@ -547,7 +550,7 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), 10, "A")
+		err := service.AddRebuy(context.Background(), testTournamentID, "A")
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -561,7 +564,7 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), 10, "A")
+		err := service.AddRebuy(context.Background(), testTournamentID, "A")
 
 		assert.ErrorIs(t, err, domain.ErrIncorrectStatus)
 		assert.True(t, repo.getCalled)
@@ -574,7 +577,7 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), 10, "A")
+		err := service.AddRebuy(context.Background(), testTournamentID, "A")
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -584,7 +587,7 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 
 func runningTournamentWithPlayers() *domain.Tournament {
 	return &domain.Tournament{
-		ID:          10,
+		ID:          testTournamentID,
 		Name:        "Friday Game",
 		Status:      domain.StatusRunning,
 		Players:     []string{"A", "B", "C"},
@@ -606,7 +609,7 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), 10, "B")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B")
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
@@ -622,7 +625,7 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 		repo := &mockTournamentRepository{}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), 10, "   ")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "   ")
 
 		assert.ErrorIs(t, err, app.ErrInvalidPlayerName)
 		assert.False(t, repo.getCalled)
@@ -634,7 +637,7 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), 10, "B")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B")
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -648,7 +651,7 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), 10, "B")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B")
 
 		assert.ErrorIs(t, err, domain.ErrIncorrectStatus)
 		assert.True(t, repo.getCalled)
@@ -661,7 +664,7 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), 10, "B")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B")
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -671,7 +674,7 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 
 func runningTournamentReadyToFinish() *domain.Tournament {
 	return &domain.Tournament{
-		ID:          10,
+		ID:          testTournamentID,
 		Name:        "Friday Game",
 		Status:      domain.StatusRunning,
 		Players:     []string{"A"},
@@ -692,7 +695,7 @@ func TestTournamentService_FinishTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.FinishTournament(context.Background(), 10)
+		err := service.FinishTournament(context.Background(), testTournamentID)
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
@@ -709,7 +712,7 @@ func TestTournamentService_FinishTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.FinishTournament(context.Background(), 10)
+		err := service.FinishTournament(context.Background(), testTournamentID)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -723,7 +726,7 @@ func TestTournamentService_FinishTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.FinishTournament(context.Background(), 10)
+		err := service.FinishTournament(context.Background(), testTournamentID)
 
 		assert.ErrorIs(t, err, domain.ErrCantFinish)
 		assert.True(t, repo.getCalled)
@@ -736,7 +739,7 @@ func TestTournamentService_FinishTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.FinishTournament(context.Background(), 10)
+		err := service.FinishTournament(context.Background(), testTournamentID)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)

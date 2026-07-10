@@ -1,9 +1,13 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type Tournament struct {
-	ID int64
+	ID uuid.UUID
 
 	//custom
 	Name        string
