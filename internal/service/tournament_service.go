@@ -26,50 +26,20 @@ func NewTournamentService(repo TournamentRepository) *TournamentService {
 	return &TournamentService{repo: repo}
 }
 
-func (s *TournamentService) CreateTournament(ctx context.Context, input CreateTournamentInput) (uuid.UUID, error) {
-	stack, err := domain.GenerateStackPlan(len(input.Players), input.Chips, input.Style)
+func (s *TournamentService) CreateTournament(ctx context.Context, name string,
+	date time.Time,
+	players []string,
+	buyInAmount int64,
+	chips []domain.ChipDenomination,
+	rebuyRules domain.RebuyRules,
+	duration time.Duration,
+	stack domain.StackPlan,
+	blinds []domain.BlindLevel,
+	payouts []domain.PayoutSpot,
+) (uuid.UUID, error) {
+	tr, err := domain.NewTournament(name, date, players, buyInAmount, chips, rebuyRules, duration, stack, blinds, payouts)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: generate stack plan: %w", app.ErrValidation, err)
-	}
-
-	blinds, err := domain.GenerateBlinds(stack, input.Style, input.Duration, input.LevelDuration)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: generate blinds: %w", app.ErrValidation, err)
-	}
-
-	var payouts []domain.PayoutSpot
-
-	switch input.PayoutMode {
-	case PayoutModeCustom:
-		payouts, err = domain.CustomPayouts(input.PayoutFixedBuyIns, len(input.Players))
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("%w: build custom payouts: %w", app.ErrValidation, err)
-		}
-	case PayoutModeDefault:
-		payouts, err = domain.DefaultPayouts(len(input.Players))
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("%w: build default payouts: %w", app.ErrValidation, err)
-		}
-	default:
-		return uuid.Nil, fmt.Errorf("%w: %w", app.ErrValidation, app.ErrInvalidPayoutMode)
-	}
-
-	tr, err := domain.NewTournament(input.Name,
-		input.Date,
-		input.Players,
-		input.BuyInAmount,
-		input.Chips,
-		domain.RebuyRules{
-			Allowed:  input.RebuyAllowed,
-			MaxLevel: input.RebuyMaxLevel,
-		},
-		input.Duration,
-		stack,
-		blinds,
-		payouts,
-	)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: build tournament: %w", app.ErrValidation, err)
+		return uuid.Nil, fmt.Errorf("build tournament: %w", err)
 	}
 
 	id, err := s.repo.Create(ctx, tr)
