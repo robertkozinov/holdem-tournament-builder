@@ -79,48 +79,25 @@ func (r *mockTournamentRepository) Delete(ctx context.Context, id uuid.UUID) err
 	return nil
 }
 
-type createTournamentInput struct {
-	name        string
-	date        time.Time
-	players     []string
-	buyInAmount int64
-	chips       []domain.ChipDenomination
-	rebuyRules  domain.RebuyRules
-	duration    time.Duration
-	stack       domain.StackPlan
-	blinds      []domain.BlindLevel
-	payouts     []domain.PayoutSpot
-}
-
-func validCreateTournamentInput() createTournamentInput {
-	return createTournamentInput{
-		name:        "Friday Game",
-		date:        time.Date(2026, 7, 8, 20, 0, 0, 0, time.UTC),
-		players:     []string{"A", "B", "C", "D"},
-		buyInAmount: 1000,
-		chips:       []domain.ChipDenomination{{Value: 25, Count: 50}, {Value: 100, Count: 50}},
-		rebuyRules:  domain.RebuyRules{Allowed: true, MaxLevel: 3},
-		duration:    2 * time.Hour,
-		stack:       domain.StackPlan{},
-		blinds:      nil,
-		payouts:     nil,
+func validCreateTournamentInput() CreateTournamentInput {
+	return CreateTournamentInput{
+		Name:              "Friday Game",
+		Date:              time.Date(2026, 7, 8, 20, 0, 0, 0, time.UTC),
+		Players:           []string{"A", "B", "C", "D"},
+		BuyInAmount:       1000,
+		Chips:             []domain.ChipDenomination{{Value: 25, Count: 80}, {Value: 100, Count: 80}, {Value: 500, Count: 40}},
+		Style:             domain.StyleStandard,
+		Duration:          2 * time.Hour,
+		LevelDuration:     20 * time.Minute,
+		RebuyAllowed:      true,
+		RebuyMaxLevel:     3,
+		PayoutMode:        PayoutModeDefault,
+		PayoutFixedBuyIns: nil,
 	}
 }
 
-func createTournament(service *TournamentService, input createTournamentInput) (uuid.UUID, error) {
-	return service.CreateTournament(
-		context.Background(),
-		input.name,
-		input.date,
-		input.players,
-		input.buyInAmount,
-		input.chips,
-		input.rebuyRules,
-		input.duration,
-		input.stack,
-		input.blinds,
-		input.payouts,
-	)
+func createTournament(service *TournamentService, input CreateTournamentInput) (uuid.UUID, error) {
+	return service.CreateTournament(context.Background(), input)
 }
 
 func tournamentWithStatus(status domain.Status) *domain.Tournament {
@@ -143,6 +120,11 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 		assert.True(t, repo.createCalled)
 		require.NotNil(t, repo.createdTournament)
 		assert.Equal(t, "Friday Game", repo.createdTournament.Name)
+		assert.Equal(t, domain.StatusCreated, repo.createdTournament.Status)
+		assert.Equal(t, domain.RebuyRules{Allowed: true, MaxLevel: 3}, repo.createdTournament.RebuyRules)
+		assert.NotEmpty(t, repo.createdTournament.StartingStack.Distribution)
+		assert.NotEmpty(t, repo.createdTournament.BlindStructure)
+		assert.NotEmpty(t, repo.createdTournament.PayoutSpots)
 	})
 
 	t.Run("returns error when tournament is invalid", func(t *testing.T) {
@@ -150,12 +132,74 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 		service := NewTournamentService(repo)
 
 		input := validCreateTournamentInput()
-		input.name = ""
+		input.Name = ""
 
 		id, err := createTournament(service, input)
 
 		assert.Equal(t, uuid.Nil, id)
 		assert.ErrorIs(t, err, domain.ErrEmptyName)
+		assert.False(t, repo.createCalled)
+	})
+
+	t.Run("creates tournament with custom payouts", func(t *testing.T) {
+		repo := &mockTournamentRepository{createID: testTournamentID}
+		service := NewTournamentService(repo)
+
+		input := validCreateTournamentInput()
+		input.PayoutMode = PayoutModeCustom
+		input.PayoutFixedBuyIns = []int{1}
+
+		id, err := createTournament(service, input)
+
+		require.NoError(t, err)
+		assert.Equal(t, testTournamentID, id)
+		require.NotNil(t, repo.createdTournament)
+		assert.Equal(t, []domain.PayoutSpot{
+			{Place: 1, Kind: domain.PayoutRemainder},
+			{Place: 2, Kind: domain.PayoutFixed, BuyInsValue: 1},
+		}, repo.createdTournament.PayoutSpots)
+	})
+
+	t.Run("returns error when payout mode is invalid", func(t *testing.T) {
+		repo := &mockTournamentRepository{createID: testTournamentID}
+		service := NewTournamentService(repo)
+
+		input := validCreateTournamentInput()
+		input.PayoutMode = PayoutMode("unknown")
+
+		id, err := createTournament(service, input)
+
+		assert.Equal(t, uuid.Nil, id)
+		assert.ErrorIs(t, err, app.ErrInvalidPayoutMode)
+		assert.False(t, repo.createCalled)
+	})
+
+	t.Run("returns error when stack generation fails", func(t *testing.T) {
+		repo := &mockTournamentRepository{createID: testTournamentID}
+		service := NewTournamentService(repo)
+
+		input := validCreateTournamentInput()
+		input.Chips = nil
+
+		id, err := createTournament(service, input)
+
+		assert.Equal(t, uuid.Nil, id)
+		assert.ErrorIs(t, err, domain.ErrEmptyChipSet)
+		assert.False(t, repo.createCalled)
+	})
+
+	t.Run("returns error when blind generation fails", func(t *testing.T) {
+		repo := &mockTournamentRepository{createID: testTournamentID}
+		service := NewTournamentService(repo)
+
+		input := validCreateTournamentInput()
+		input.Duration = 20 * time.Minute
+		input.LevelDuration = 20 * time.Minute
+
+		id, err := createTournament(service, input)
+
+		assert.Equal(t, uuid.Nil, id)
+		assert.ErrorIs(t, err, domain.ErrNotEnoughLevels)
 		assert.False(t, repo.createCalled)
 	})
 

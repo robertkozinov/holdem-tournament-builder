@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"holdem-tournament-builder/internal/service"
 	"holdem-tournament-builder/internal/storage/postgres"
 	transporthttp "holdem-tournament-builder/internal/transport/http"
 )
@@ -20,7 +21,11 @@ func main() {
 	}
 	defer pool.Close()
 
-	router := transporthttp.NewRouter()
+	repo := postgres.NewTournamentRepository(pool)
+	tournamentService := service.NewTournamentService(repo)
+	tournamentHandler := transporthttp.NewTournamentHandler(tournamentService)
+
+	router := transporthttp.NewRouter(tournamentHandler)
 
 	log.Println("server started on :8080")
 	if err := http.ListenAndServe(":8080", router); err != nil {
