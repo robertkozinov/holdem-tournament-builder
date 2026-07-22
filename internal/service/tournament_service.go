@@ -80,7 +80,7 @@ func (s *TournamentService) CreateTournament(ctx context.Context, input CreateTo
 	return id, nil
 }
 
-func (s *TournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
+func (s *TournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID, now time.Time) (*domain.Tournament, error) {
 	if id == uuid.Nil {
 		return nil, app.ErrInvalidTournamentID
 	}
@@ -88,6 +88,22 @@ func (s *TournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID)
 	tr, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get tournament: %w", err)
+	}
+
+	if tr.Status != domain.StatusRunning {
+		return tr, nil
+	}
+
+	currentLvl := tr.CurrentLevel
+
+	if err := tr.AdvanceLevelIfNeeded(now); err != nil {
+		return nil, fmt.Errorf("advance blind level: %w", err)
+	}
+
+	if tr.CurrentLevel != currentLvl {
+		if err := s.repo.Update(ctx, tr); err != nil {
+			return nil, fmt.Errorf("update tournament: %w", err)
+		}
 	}
 
 	return tr, nil
@@ -106,7 +122,7 @@ func (s *TournamentService) DeleteTournament(ctx context.Context, id uuid.UUID) 
 }
 
 func (s *TournamentService) StartTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	tr, err := s.GetTournamentByID(ctx, id)
+	tr, err := s.GetTournamentByID(ctx, id, now)
 	if err != nil {
 		return err
 	}
@@ -123,7 +139,7 @@ func (s *TournamentService) StartTournament(ctx context.Context, id uuid.UUID, n
 }
 
 func (s *TournamentService) PauseTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	tr, err := s.GetTournamentByID(ctx, id)
+	tr, err := s.GetTournamentByID(ctx, id, now)
 	if err != nil {
 		return err
 	}
@@ -140,7 +156,7 @@ func (s *TournamentService) PauseTournament(ctx context.Context, id uuid.UUID, n
 }
 
 func (s *TournamentService) ResumeTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	tr, err := s.GetTournamentByID(ctx, id)
+	tr, err := s.GetTournamentByID(ctx, id, now)
 	if err != nil {
 		return err
 	}
@@ -156,8 +172,8 @@ func (s *TournamentService) ResumeTournament(ctx context.Context, id uuid.UUID, 
 	return nil
 }
 
-func (s *TournamentService) FinishTournament(ctx context.Context, id uuid.UUID) error {
-	tr, err := s.GetTournamentByID(ctx, id)
+func (s *TournamentService) FinishTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
+	tr, err := s.GetTournamentByID(ctx, id, now)
 	if err != nil {
 		return err
 	}
@@ -174,13 +190,24 @@ func (s *TournamentService) FinishTournament(ctx context.Context, id uuid.UUID) 
 }
 
 func (s *TournamentService) LevelUpTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	tr, err := s.GetTournamentByID(ctx, id)
+	if id == uuid.Nil {
+		return app.ErrInvalidTournamentID
+	}
+	tr, err := s.repo.GetByID(ctx, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("get tournament: %w", err)
 	}
 
-	if err := tr.LevelUp(now); err != nil {
-		return err
+	currentLvl := tr.CurrentLevel
+
+	if err := tr.AdvanceLevelIfNeeded(now); err != nil {
+		return fmt.Errorf("advance blind level: %w", err)
+	}
+
+	if currentLvl == tr.CurrentLevel {
+		if err := tr.LevelUp(now); err != nil {
+			return err
+		}
 	}
 
 	if err := s.repo.Update(ctx, tr); err != nil {
@@ -190,13 +217,13 @@ func (s *TournamentService) LevelUpTournament(ctx context.Context, id uuid.UUID,
 	return nil
 }
 
-func (s *TournamentService) AddRebuy(ctx context.Context, id uuid.UUID, playerName string) error {
+func (s *TournamentService) AddRebuy(ctx context.Context, id uuid.UUID, playerName string, now time.Time) error {
 	playerName = strings.TrimSpace(playerName)
 	if playerName == "" {
-		return app.ErrInvalidPlayerName
+		return fmt.Errorf("%w: %w", app.ErrValidation, app.ErrInvalidPlayerName)
 	}
 
-	tr, err := s.GetTournamentByID(ctx, id)
+	tr, err := s.GetTournamentByID(ctx, id, now)
 	if err != nil {
 		return err
 	}
@@ -212,13 +239,13 @@ func (s *TournamentService) AddRebuy(ctx context.Context, id uuid.UUID, playerNa
 	return nil
 }
 
-func (s *TournamentService) KnockoutPlayer(ctx context.Context, id uuid.UUID, playerName string) error {
+func (s *TournamentService) KnockoutPlayer(ctx context.Context, id uuid.UUID, playerName string, now time.Time) error {
 	playerName = strings.TrimSpace(playerName)
 	if playerName == "" {
-		return app.ErrInvalidPlayerName
+		return fmt.Errorf("%w: %w", app.ErrValidation, app.ErrInvalidPlayerName)
 	}
 
-	tr, err := s.GetTournamentByID(ctx, id)
+	tr, err := s.GetTournamentByID(ctx, id, now)
 	if err != nil {
 		return err
 	}

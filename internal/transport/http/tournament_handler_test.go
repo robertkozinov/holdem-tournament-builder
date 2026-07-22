@@ -33,6 +33,36 @@ type mockTournamentService struct {
 	deleteCalled bool
 	deleteID     uuid.UUID
 	deleteErr    error
+
+	startCalled bool
+	startID     uuid.UUID
+	startErr    error
+
+	pauseCalled bool
+	pauseID     uuid.UUID
+	pauseErr    error
+
+	resumeCalled bool
+	resumeID     uuid.UUID
+	resumeErr    error
+
+	finishCalled bool
+	finishID     uuid.UUID
+	finishErr    error
+
+	levelUpCalled bool
+	levelUpID     uuid.UUID
+	levelUpErr    error
+
+	addRebuyCalled     bool
+	addRebuyID         uuid.UUID
+	addRebuyPlayerName string
+	addRebuyErr        error
+
+	knockoutCalled     bool
+	knockoutID         uuid.UUID
+	knockoutPlayerName string
+	knockoutErr        error
 }
 
 func (s *mockTournamentService) CreateTournament(ctx context.Context, input service.CreateTournamentInput) (uuid.UUID, error) {
@@ -46,7 +76,7 @@ func (s *mockTournamentService) CreateTournament(ctx context.Context, input serv
 	return s.createID, nil
 }
 
-func (s *mockTournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
+func (s *mockTournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID, now time.Time) (*domain.Tournament, error) {
 	s.getCalled = true
 	s.getID = id
 
@@ -63,6 +93,85 @@ func (s *mockTournamentService) DeleteTournament(ctx context.Context, id uuid.UU
 
 	if s.deleteErr != nil {
 		return s.deleteErr
+	}
+
+	return nil
+}
+
+func (s *mockTournamentService) StartTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
+	s.startCalled = true
+	s.startID = id
+
+	if s.startErr != nil {
+		return s.startErr
+	}
+
+	return nil
+}
+
+func (s *mockTournamentService) PauseTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
+	s.pauseCalled = true
+	s.pauseID = id
+
+	if s.pauseErr != nil {
+		return s.pauseErr
+	}
+
+	return nil
+}
+
+func (s *mockTournamentService) ResumeTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
+	s.resumeCalled = true
+	s.resumeID = id
+
+	if s.resumeErr != nil {
+		return s.resumeErr
+	}
+
+	return nil
+}
+
+func (s *mockTournamentService) FinishTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
+	s.finishCalled = true
+	s.finishID = id
+
+	if s.finishErr != nil {
+		return s.finishErr
+	}
+
+	return nil
+}
+
+func (s *mockTournamentService) LevelUpTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
+	s.levelUpCalled = true
+	s.levelUpID = id
+
+	if s.levelUpErr != nil {
+		return s.levelUpErr
+	}
+
+	return nil
+}
+
+func (s *mockTournamentService) AddRebuy(ctx context.Context, id uuid.UUID, playerName string, now time.Time) error {
+	s.addRebuyCalled = true
+	s.addRebuyID = id
+	s.addRebuyPlayerName = playerName
+
+	if s.addRebuyErr != nil {
+		return s.addRebuyErr
+	}
+
+	return nil
+}
+
+func (s *mockTournamentService) KnockoutPlayer(ctx context.Context, id uuid.UUID, playerName string, now time.Time) error {
+	s.knockoutCalled = true
+	s.knockoutID = id
+	s.knockoutPlayerName = playerName
+
+	if s.knockoutErr != nil {
+		return s.knockoutErr
 	}
 
 	return nil
@@ -372,5 +481,514 @@ func TestTournamentHandler_DeleteTournament(t *testing.T) {
 
 		require.Equal(t, http.StatusInternalServerError, rec.Code)
 		assert.True(t, srv.deleteCalled)
+	})
+}
+
+func TestTournamentHandler_StartTournament(t *testing.T) {
+	t.Run("starts tournament", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/start",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		assert.True(t, srv.startCalled)
+		assert.Equal(t, id, srv.startID)
+		assert.Empty(t, rec.Body.String())
+	})
+
+	t.Run("returns bad request when id is invalid", func(t *testing.T) {
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/invalid-id/start",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.False(t, srv.startCalled)
+	})
+
+	t.Run("returns not found when tournament does not exist", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			startErr: app.ErrTournamentNotFound,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/start",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNotFound, rec.Code)
+		assert.True(t, srv.startCalled)
+		assert.Equal(t, id, srv.startID)
+	})
+
+	t.Run("returns conflict when tournament cannot be started", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			startErr: domain.ErrIncorrectStatus,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/start",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.True(t, srv.startCalled)
+		assert.Equal(t, id, srv.startID)
+	})
+
+	t.Run("returns internal server error when service fails", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			startErr: errors.New("service error"),
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/start",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.True(t, srv.startCalled)
+		assert.Equal(t, id, srv.startID)
+	})
+}
+
+func TestTournamentHandler_PauseTournament(t *testing.T) {
+	t.Run("pauses tournament", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/pause",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		assert.True(t, srv.pauseCalled)
+		assert.Equal(t, id, srv.pauseID)
+		assert.Empty(t, rec.Body.String())
+	})
+
+	t.Run("returns bad request when id is invalid", func(t *testing.T) {
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/invalid-id/pause",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.False(t, srv.pauseCalled)
+	})
+
+	t.Run("returns conflict when tournament cannot be paused", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			pauseErr: domain.ErrIncorrectStatus,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/pause",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.True(t, srv.pauseCalled)
+		assert.Equal(t, id, srv.pauseID)
+	})
+}
+
+func TestTournamentHandler_ResumeTournament(t *testing.T) {
+	t.Run("resumes tournament", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/resume",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		assert.True(t, srv.resumeCalled)
+		assert.Equal(t, id, srv.resumeID)
+		assert.Empty(t, rec.Body.String())
+	})
+
+	t.Run("returns bad request when id is invalid", func(t *testing.T) {
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/invalid-id/resume",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.False(t, srv.resumeCalled)
+	})
+
+	t.Run("returns conflict when tournament cannot be resumed", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			resumeErr: domain.ErrIncorrectStatus,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/resume",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.True(t, srv.resumeCalled)
+		assert.Equal(t, id, srv.resumeID)
+	})
+}
+
+func TestTournamentHandler_FinishTournament(t *testing.T) {
+	t.Run("finishes tournament", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/finish",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		assert.True(t, srv.finishCalled)
+		assert.Equal(t, id, srv.finishID)
+		assert.Empty(t, rec.Body.String())
+	})
+
+	t.Run("returns bad request when id is invalid", func(t *testing.T) {
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/invalid-id/finish",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.False(t, srv.finishCalled)
+	})
+
+	t.Run("returns conflict when tournament cannot be finished", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			finishErr: domain.ErrCantFinish,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/finish",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.True(t, srv.finishCalled)
+		assert.Equal(t, id, srv.finishID)
+	})
+}
+
+func TestTournamentHandler_LevelUpTournament(t *testing.T) {
+	t.Run("levels up tournament", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/level-up",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		assert.True(t, srv.levelUpCalled)
+		assert.Equal(t, id, srv.levelUpID)
+		assert.Empty(t, rec.Body.String())
+	})
+
+	t.Run("returns bad request when id is invalid", func(t *testing.T) {
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/invalid-id/level-up",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.False(t, srv.levelUpCalled)
+	})
+
+	t.Run("returns conflict when tournament cannot level up", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			levelUpErr: domain.ErrMaxBlindLevel,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/tournaments/"+id.String()+"/level-up",
+			nil,
+		)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.True(t, srv.levelUpCalled)
+		assert.Equal(t, id, srv.levelUpID)
+	})
+}
+
+func TestTournamentHandler_AddRebuy(t *testing.T) {
+	t.Run("adds rebuy", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/rebuy",
+			strings.NewReader(`{"player_name":"A"}`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		assert.True(t, srv.addRebuyCalled)
+		assert.Equal(t, id, srv.addRebuyID)
+		assert.Equal(t, "A", srv.addRebuyPlayerName)
+		assert.Empty(t, rec.Body.String())
+	})
+
+	t.Run("returns bad request when json is invalid", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/rebuy", strings.NewReader(`{`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.False(t, srv.addRebuyCalled)
+	})
+
+	t.Run("returns bad request when player name is invalid", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			addRebuyErr: fmt.Errorf("%w: %w",
+				app.ErrValidation, app.ErrInvalidPlayerName),
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/rebuy",
+			strings.NewReader(`{"player_name":" "}`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.True(t, srv.addRebuyCalled)
+	})
+
+	t.Run("returns not found when player does not exist", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			addRebuyErr: domain.ErrPlayerNotFound,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/rebuy",
+			strings.NewReader(`{"player_name":"A"}`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNotFound, rec.Code)
+		assert.True(t, srv.addRebuyCalled)
+		assert.Equal(t, id, srv.addRebuyID)
+	})
+
+	t.Run("returns conflict when rebuy is not allowed", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			addRebuyErr: domain.ErrRebuyNotAllowed,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/rebuy",
+			strings.NewReader(`{"player_name":"A"}`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.True(t, srv.addRebuyCalled)
+		assert.Equal(t, id, srv.addRebuyID)
+	})
+}
+
+func TestTournamentHandler_KnockoutPlayer(t *testing.T) {
+	t.Run("knocks out player", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/knockout",
+			strings.NewReader(`{"player_name":"A"}`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNoContent, rec.Code)
+		assert.True(t, srv.knockoutCalled)
+		assert.Equal(t, id, srv.knockoutID)
+		assert.Equal(t, "A", srv.knockoutPlayerName)
+		assert.Empty(t, rec.Body.String())
+	})
+
+	t.Run("returns bad request when json is invalid", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/knockout", strings.NewReader(`{`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.False(t, srv.knockoutCalled)
+	})
+
+	t.Run("returns not found when player does not exist", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			knockoutErr: domain.ErrPlayerNotFound,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/knockout",
+			strings.NewReader(`{"player_name":"A"}`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusNotFound, rec.Code)
+		assert.True(t, srv.knockoutCalled)
+		assert.Equal(t, id, srv.knockoutID)
+	})
+
+	t.Run("returns conflict when player cannot be knocked out", func(t *testing.T) {
+		id := uuid.New()
+		srv := &mockTournamentService{
+			knockoutErr: domain.ErrCantKnockout,
+		}
+		router := NewRouter(NewTournamentHandler(srv))
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/tournaments/"+id.String()+"/knockout",
+			strings.NewReader(`{"player_name":"A"}`))
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusConflict, rec.Code)
+		assert.True(t, srv.knockoutCalled)
+		assert.Equal(t, id, srv.knockoutID)
 	})
 }

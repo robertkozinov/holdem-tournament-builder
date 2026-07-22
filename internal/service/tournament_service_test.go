@@ -31,6 +31,7 @@ type mockTournamentRepository struct {
 	deleteErr    error
 
 	updateCalled      bool
+	updateCalls       int
 	updatedTournament *domain.Tournament
 	updateErr         error
 }
@@ -59,6 +60,7 @@ func (r *mockTournamentRepository) GetByID(ctx context.Context, id uuid.UUID) (*
 
 func (r *mockTournamentRepository) Update(ctx context.Context, tournament *domain.Tournament) error {
 	r.updateCalled = true
+	r.updateCalls++
 	r.updatedTournament = tournament
 
 	if r.updateErr != nil {
@@ -105,6 +107,19 @@ func tournamentWithStatus(status domain.Status) *domain.Tournament {
 		ID:     testTournamentID,
 		Name:   "Friday Game",
 		Status: status,
+	}
+}
+
+func runningTournament(now time.Time) *domain.Tournament {
+	return &domain.Tournament{
+		ID:             testTournamentID,
+		Name:           "Friday Game",
+		Status:         domain.StatusRunning,
+		CurrentLevel:   0,
+		LevelStartedAt: now,
+		BlindStructure: []domain.BlindLevel{
+			{Duration: 20 * time.Minute},
+		},
 	}
 }
 
@@ -220,16 +235,19 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 }
 
 func TestTournamentService_GetTournamentByID(t *testing.T) {
+	now := time.Date(2026, 7, 22, 20, 0, 0, 0, time.UTC)
+
 	t.Run("gets tournament", func(t *testing.T) {
 		wantTr := &domain.Tournament{ID: testTournamentID, Name: "Friday game"}
 		repo := &mockTournamentRepository{getTournament: wantTr}
 		service := NewTournamentService(repo)
 
-		got, err := service.GetTournamentByID(context.Background(), testTournamentID)
+		got, err := service.GetTournamentByID(context.Background(), testTournamentID, now)
 
 		require.NoError(t, err)
 		assert.Same(t, wantTr, got)
 		assert.True(t, repo.getCalled)
+		assert.False(t, repo.updateCalled)
 		assert.Equal(t, testTournamentID, repo.getID)
 	})
 
@@ -237,7 +255,7 @@ func TestTournamentService_GetTournamentByID(t *testing.T) {
 		repo := &mockTournamentRepository{}
 		service := NewTournamentService(repo)
 
-		got, err := service.GetTournamentByID(context.Background(), uuid.Nil)
+		got, err := service.GetTournamentByID(context.Background(), uuid.Nil, now)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, app.ErrInvalidTournamentID)
@@ -250,12 +268,97 @@ func TestTournamentService_GetTournamentByID(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		got, err := service.GetTournamentByID(context.Background(), testTournamentID)
+		got, err := service.GetTournamentByID(context.Background(), testTournamentID, now)
 
 		require.Error(t, err)
 		assert.ErrorIs(t, err, repoErr)
 		assert.Nil(t, got)
 		assert.True(t, repo.getCalled)
+	})
+
+	t.Run("advances expired blind levels", func(t *testing.T) {
+		tr := &domain.Tournament{
+			ID:             testTournamentID,
+			Status:         domain.StatusRunning,
+			CurrentLevel:   0,
+			LevelStartedAt: now.Add(-45 * time.Minute),
+			BlindStructure: []domain.BlindLevel{
+				{Duration: 20 * time.Minute},
+				{Duration: 20 * time.Minute},
+				{Duration: 20 * time.Minute},
+			},
+		}
+
+		repo := &mockTournamentRepository{getTournament: tr}
+
+		service := NewTournamentService(repo)
+
+		gotTr, err := service.GetTournamentByID(context.Background(), testTournamentID, now)
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, gotTr.CurrentLevel)
+		assert.Equal(t, now.Add(-5*time.Minute), gotTr.LevelStartedAt)
+		assert.True(t, repo.updateCalled)
+		assert.Equal(t, 1, repo.updateCalls)
+		require.NotNil(t, repo.updatedTournament)
+		assert.Equal(t, gotTr, repo.updatedTournament)
+	})
+
+	t.Run("does not update when blind level has not expired", func(t *testing.T) {
+		tr := &domain.Tournament{
+			ID:             testTournamentID,
+			Status:         domain.StatusRunning,
+			CurrentLevel:   0,
+			LevelStartedAt: now.Add(-10 * time.Minute),
+			BlindStructure: []domain.BlindLevel{
+				{Duration: 20 * time.Minute},
+				{Duration: 20 * time.Minute},
+				{Duration: 20 * time.Minute},
+			},
+		}
+
+		repo := &mockTournamentRepository{getTournament: tr}
+
+		service := NewTournamentService(repo)
+
+		gotTr, err := service.GetTournamentByID(context.Background(), testTournamentID, now)
+
+		require.NoError(t, err)
+		assert.Equal(t, 0, gotTr.CurrentLevel)
+		assert.Equal(t, now.Add(-10*time.Minute), gotTr.LevelStartedAt)
+		assert.False(t, repo.updateCalled)
+	})
+
+	t.Run("returns error when update fails", func(t *testing.T) {
+		tr := &domain.Tournament{
+			ID:             testTournamentID,
+			Status:         domain.StatusRunning,
+			CurrentLevel:   0,
+			LevelStartedAt: now.Add(-25 * time.Minute),
+			BlindStructure: []domain.BlindLevel{
+				{Duration: 20 * time.Minute},
+				{Duration: 20 * time.Minute},
+				{Duration: 20 * time.Minute},
+			},
+		}
+
+		repoErr := errors.New("repo err")
+
+		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
+
+		service := NewTournamentService(repo)
+
+		gotTr, err := service.GetTournamentByID(context.Background(), testTournamentID, now)
+
+		require.ErrorIs(t, err, repoErr)
+		assert.Nil(t, gotTr)
+
+		assert.True(t, repo.getCalled)
+		assert.True(t, repo.updateCalled)
+
+		require.NotNil(t, repo.updatedTournament)
+		assert.Equal(t, 1, repo.updatedTournament.CurrentLevel)
+		assert.Equal(t, now.Add(-5*time.Minute), repo.updatedTournament.LevelStartedAt)
 	})
 }
 
@@ -324,7 +427,7 @@ func TestTournamentService_StartTournament(t *testing.T) {
 	})
 
 	t.Run("returns error when tournament cant be started", func(t *testing.T) {
-		tr := tournamentWithStatus(domain.StatusRunning)
+		tr := runningTournament(now)
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
@@ -353,7 +456,7 @@ func TestTournamentService_PauseTournament(t *testing.T) {
 	now := time.Date(2026, 7, 8, 20, 0, 0, 0, time.UTC)
 
 	t.Run("pauses tournament", func(t *testing.T) {
-		tr := tournamentWithStatus(domain.StatusRunning)
+		tr := runningTournament(now)
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
@@ -394,7 +497,7 @@ func TestTournamentService_PauseTournament(t *testing.T) {
 
 	t.Run("returns error when update fails", func(t *testing.T) {
 		repoErr := errors.New("repo err")
-		tr := tournamentWithStatus(domain.StatusRunning)
+		tr := runningTournament(now)
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
@@ -444,7 +547,7 @@ func TestTournamentService_ResumeTournament(t *testing.T) {
 	})
 
 	t.Run("returns error when tournament cant be resumed", func(t *testing.T) {
-		tr := tournamentWithStatus(domain.StatusRunning)
+		tr := runningTournament(now)
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
@@ -476,12 +579,13 @@ func TestTournamentService_ResumeTournament(t *testing.T) {
 	})
 }
 
-func runningTournamentWithBlinds() *domain.Tournament {
+func runningTournamentWithBlinds(now time.Time) *domain.Tournament {
 	return &domain.Tournament{
-		ID:           testTournamentID,
-		Name:         "Friday Game",
-		Status:       domain.StatusRunning,
-		CurrentLevel: 0,
+		ID:             testTournamentID,
+		Name:           "Friday Game",
+		Status:         domain.StatusRunning,
+		CurrentLevel:   0,
+		LevelStartedAt: now,
 		BlindStructure: []domain.BlindLevel{
 			{SmallBlind: 25, BigBlind: 50, Duration: 10 * time.Minute},
 			{SmallBlind: 50, BigBlind: 100, Duration: 10 * time.Minute},
@@ -493,7 +597,7 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 	now := time.Date(2026, 7, 8, 20, 0, 0, 0, time.UTC)
 
 	t.Run("levels up tournament", func(t *testing.T) {
-		tr := runningTournamentWithBlinds()
+		tr := runningTournamentWithBlinds(now)
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
@@ -506,6 +610,41 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 		require.NotNil(t, repo.updatedTournament)
 		assert.Equal(t, 1, repo.updatedTournament.CurrentLevel)
 		assert.Equal(t, now, repo.updatedTournament.LevelStartedAt)
+	})
+
+	t.Run("does not level up twice when blind level has expired", func(t *testing.T) {
+		tr := runningTournamentWithBlinds(now)
+		tr.LevelStartedAt = now.Add(-10 * time.Minute)
+		tr.BlindStructure = append(tr.BlindStructure, domain.BlindLevel{
+			SmallBlind: 100,
+			BigBlind:   200,
+			Duration:   10 * time.Minute,
+		})
+
+		repo := &mockTournamentRepository{getTournament: tr}
+		service := NewTournamentService(repo)
+
+		err := service.LevelUpTournament(context.Background(), testTournamentID, now)
+
+		require.NoError(t, err)
+		assert.True(t, repo.getCalled)
+		assert.Equal(t, 1, repo.updateCalls)
+		assert.Equal(t, testTournamentID, repo.getID)
+		assert.True(t, repo.updateCalled)
+		require.NotNil(t, repo.updatedTournament)
+		assert.Equal(t, 1, repo.updatedTournament.CurrentLevel)
+		assert.Equal(t, now, repo.updatedTournament.LevelStartedAt)
+	})
+
+	t.Run("returns error when id is invalid", func(t *testing.T) {
+		repo := &mockTournamentRepository{}
+		service := NewTournamentService(repo)
+
+		err := service.LevelUpTournament(context.Background(), uuid.Nil, now)
+
+		assert.ErrorIs(t, err, app.ErrInvalidTournamentID)
+		assert.False(t, repo.getCalled)
+		assert.False(t, repo.updateCalled)
 	})
 
 	t.Run("returns error when get tournament fails", func(t *testing.T) {
@@ -521,7 +660,7 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 	})
 
 	t.Run("returns error when tournament cant level up", func(t *testing.T) {
-		tr := runningTournamentWithBlinds()
+		tr := runningTournamentWithBlinds(now)
 		tr.CurrentLevel = 1
 
 		repo := &mockTournamentRepository{getTournament: tr}
@@ -536,7 +675,7 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 
 	t.Run("returns error when update fails", func(t *testing.T) {
 		repoErr := errors.New("repo err")
-		tr := runningTournamentWithBlinds()
+		tr := runningTournamentWithBlinds(now)
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
@@ -548,14 +687,19 @@ func TestTournamentService_LevelUpTournament(t *testing.T) {
 	})
 }
 
-func runningTournamentWithRebuy() *domain.Tournament {
+func runningTournamentWithRebuy(now time.Time) *domain.Tournament {
 	return &domain.Tournament{
-		ID:          testTournamentID,
-		Name:        "Friday Game",
-		Status:      domain.StatusRunning,
-		Players:     []string{"A", "B"},
-		BuyInAmount: 1000,
-		RebuyRules:  domain.RebuyRules{Allowed: true, MaxLevel: 3},
+		ID:             testTournamentID,
+		Name:           "Friday Game",
+		Status:         domain.StatusRunning,
+		Players:        []string{"A", "B"},
+		BuyInAmount:    1000,
+		LevelStartedAt: now,
+		BlindStructure: []domain.BlindLevel{
+			{SmallBlind: 25, BigBlind: 50, Duration: 10 * time.Minute},
+			{SmallBlind: 50, BigBlind: 100, Duration: 10 * time.Minute},
+		},
+		RebuyRules: domain.RebuyRules{Allowed: true, MaxLevel: 3},
 		Contributions: map[string]int64{
 			"A": 1000,
 			"B": 1000,
@@ -564,12 +708,13 @@ func runningTournamentWithRebuy() *domain.Tournament {
 }
 
 func TestTournamentService_AddRebuy(t *testing.T) {
+	now := time.Date(2026, 7, 22, 20, 0, 0, 0, time.UTC)
 	t.Run("adds rebuy", func(t *testing.T) {
-		tr := runningTournamentWithRebuy()
+		tr := runningTournamentWithRebuy(now)
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), testTournamentID, "A")
+		err := service.AddRebuy(context.Background(), testTournamentID, "A", now)
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
@@ -582,7 +727,7 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 		repo := &mockTournamentRepository{}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), testTournamentID, "   ")
+		err := service.AddRebuy(context.Background(), testTournamentID, "   ", now)
 
 		assert.ErrorIs(t, err, app.ErrInvalidPlayerName)
 		assert.False(t, repo.getCalled)
@@ -594,7 +739,7 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), testTournamentID, "A")
+		err := service.AddRebuy(context.Background(), testTournamentID, "A", now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -602,13 +747,13 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 	})
 
 	t.Run("returns error when rebuy cant be added", func(t *testing.T) {
-		tr := runningTournamentWithRebuy()
+		tr := runningTournamentWithRebuy(now)
 		tr.Status = domain.StatusCreated
 
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), testTournamentID, "A")
+		err := service.AddRebuy(context.Background(), testTournamentID, "A", now)
 
 		assert.ErrorIs(t, err, domain.ErrIncorrectStatus)
 		assert.True(t, repo.getCalled)
@@ -617,11 +762,11 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 
 	t.Run("returns error when update fails", func(t *testing.T) {
 		repoErr := errors.New("repo err")
-		tr := runningTournamentWithRebuy()
+		tr := runningTournamentWithRebuy(now)
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.AddRebuy(context.Background(), testTournamentID, "A")
+		err := service.AddRebuy(context.Background(), testTournamentID, "A", now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -629,13 +774,18 @@ func TestTournamentService_AddRebuy(t *testing.T) {
 	})
 }
 
-func runningTournamentWithPlayers() *domain.Tournament {
+func runningTournamentWithPlayers(now time.Time) *domain.Tournament {
 	return &domain.Tournament{
-		ID:          testTournamentID,
-		Name:        "Friday Game",
-		Status:      domain.StatusRunning,
-		Players:     []string{"A", "B", "C"},
-		BuyInAmount: 1000,
+		ID:             testTournamentID,
+		Name:           "Friday Game",
+		Status:         domain.StatusRunning,
+		Players:        []string{"A", "B", "C"},
+		BuyInAmount:    1000,
+		LevelStartedAt: now,
+		BlindStructure: []domain.BlindLevel{
+			{SmallBlind: 25, BigBlind: 50, Duration: 10 * time.Minute},
+			{SmallBlind: 50, BigBlind: 100, Duration: 10 * time.Minute},
+		},
 		Contributions: map[string]int64{
 			"A": 1000,
 			"B": 1000,
@@ -648,12 +798,13 @@ func runningTournamentWithPlayers() *domain.Tournament {
 }
 
 func TestTournamentService_KnockoutPlayer(t *testing.T) {
+	now := time.Date(2026, 7, 22, 20, 0, 0, 0, time.UTC)
 	t.Run("knocks out player", func(t *testing.T) {
-		tr := runningTournamentWithPlayers()
+		tr := runningTournamentWithPlayers(now)
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B", now)
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
@@ -669,7 +820,7 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 		repo := &mockTournamentRepository{}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), testTournamentID, "   ")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "   ", now)
 
 		assert.ErrorIs(t, err, app.ErrInvalidPlayerName)
 		assert.False(t, repo.getCalled)
@@ -681,7 +832,7 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B", now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -689,13 +840,13 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 	})
 
 	t.Run("returns error when player cant be knocked out", func(t *testing.T) {
-		tr := runningTournamentWithPlayers()
+		tr := runningTournamentWithPlayers(now)
 		tr.Status = domain.StatusCreated
 
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B", now)
 
 		assert.ErrorIs(t, err, domain.ErrIncorrectStatus)
 		assert.True(t, repo.getCalled)
@@ -704,11 +855,11 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 
 	t.Run("returns error when update fails", func(t *testing.T) {
 		repoErr := errors.New("repo err")
-		tr := runningTournamentWithPlayers()
+		tr := runningTournamentWithPlayers(now)
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B")
+		err := service.KnockoutPlayer(context.Background(), testTournamentID, "B", now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -716,13 +867,18 @@ func TestTournamentService_KnockoutPlayer(t *testing.T) {
 	})
 }
 
-func runningTournamentReadyToFinish() *domain.Tournament {
+func runningTournamentReadyToFinish(now time.Time) *domain.Tournament {
 	return &domain.Tournament{
-		ID:          testTournamentID,
-		Name:        "Friday Game",
-		Status:      domain.StatusRunning,
-		Players:     []string{"A"},
-		BuyInAmount: 1000,
+		ID:             testTournamentID,
+		Name:           "Friday Game",
+		Status:         domain.StatusRunning,
+		Players:        []string{"A"},
+		BuyInAmount:    1000,
+		LevelStartedAt: now,
+		BlindStructure: []domain.BlindLevel{
+			{SmallBlind: 25, BigBlind: 50, Duration: 10 * time.Minute},
+			{SmallBlind: 50, BigBlind: 100, Duration: 10 * time.Minute},
+		},
 		Contributions: map[string]int64{
 			"A": 1000,
 			"B": 1000,
@@ -734,12 +890,14 @@ func runningTournamentReadyToFinish() *domain.Tournament {
 }
 
 func TestTournamentService_FinishTournament(t *testing.T) {
+	now := time.Date(2026, 7, 22, 20, 0, 0, 0, time.UTC)
+
 	t.Run("finishes tournament", func(t *testing.T) {
-		tr := runningTournamentReadyToFinish()
+		tr := runningTournamentReadyToFinish(now)
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.FinishTournament(context.Background(), testTournamentID)
+		err := service.FinishTournament(context.Background(), testTournamentID, now)
 
 		require.NoError(t, err)
 		assert.True(t, repo.getCalled)
@@ -756,7 +914,7 @@ func TestTournamentService_FinishTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.FinishTournament(context.Background(), testTournamentID)
+		err := service.FinishTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)
@@ -764,13 +922,13 @@ func TestTournamentService_FinishTournament(t *testing.T) {
 	})
 
 	t.Run("returns error when tournament cant be finished", func(t *testing.T) {
-		tr := runningTournamentReadyToFinish()
+		tr := runningTournamentReadyToFinish(now)
 		tr.Players = []string{"A", "B"}
 
 		repo := &mockTournamentRepository{getTournament: tr}
 		service := NewTournamentService(repo)
 
-		err := service.FinishTournament(context.Background(), testTournamentID)
+		err := service.FinishTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, domain.ErrCantFinish)
 		assert.True(t, repo.getCalled)
@@ -779,11 +937,11 @@ func TestTournamentService_FinishTournament(t *testing.T) {
 
 	t.Run("returns error when update fails", func(t *testing.T) {
 		repoErr := errors.New("repo err")
-		tr := runningTournamentReadyToFinish()
+		tr := runningTournamentReadyToFinish(now)
 		repo := &mockTournamentRepository{getTournament: tr, updateErr: repoErr}
 		service := NewTournamentService(repo)
 
-		err := service.FinishTournament(context.Background(), testTournamentID)
+		err := service.FinishTournament(context.Background(), testTournamentID, now)
 
 		assert.ErrorIs(t, err, repoErr)
 		assert.True(t, repo.getCalled)

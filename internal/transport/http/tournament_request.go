@@ -83,3 +83,7 @@ func parseTournamentStyle(style string) (domain.TournamentStyle, error) {
 		return 0, fmt.Errorf("invalid tournament style")
 	}
 }
+
+type PlayerActionRequest struct {
+	PlayerName string `json:"player_name"`
+}
