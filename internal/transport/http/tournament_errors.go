@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"holdem-tournament-builder/internal/app"
+	"holdem-tournament-builder/internal/domain"
 	"holdem-tournament-builder/internal/transport/response"
 	"net/http"
 
@@ -18,6 +19,14 @@ func handleServiceError(w http.ResponseWriter, err error) {
 		response.WriteError(w, http.StatusBadRequest, "invalid tournament id")
 	case errors.Is(err, app.ErrTournamentNotFound):
 		response.WriteError(w, http.StatusNotFound, "tournament not found")
+	case errors.Is(err, domain.ErrPlayerNotFound):
+		response.WriteError(w, http.StatusNotFound, "player not found")
+	case errors.Is(err, domain.ErrIncorrectStatus),
+		errors.Is(err, domain.ErrCantFinish),
+		errors.Is(err, domain.ErrMaxBlindLevel),
+		errors.Is(err, domain.ErrRebuyNotAllowed),
+		errors.Is(err, domain.ErrCantKnockout):
+		response.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		response.WriteError(w, http.StatusInternalServerError, "internal server error")
 	}
