@@ -3,8 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"holdem-tournament-builder/internal/app"
+	"holdem-tournament-builder/internal/domain"
 	"holdem-tournament-builder/internal/service"
 	"holdem-tournament-builder/internal/transport/response"
 	"net/http"
@@ -14,6 +13,8 @@ import (
 
 type TournamentService interface {
 	CreateTournament(ctx context.Context, input service.CreateTournamentInput) (uuid.UUID, error)
+	GetTournamentByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error)
+	DeleteTournament(ctx context.Context, id uuid.UUID) error
 }
 
 type TournamentHandler struct {
@@ -22,17 +23,6 @@ type TournamentHandler struct {
 
 func NewTournamentHandler(service TournamentService) *TournamentHandler {
 	return &TournamentHandler{service: service}
-}
-
-func writeError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, app.ErrValidation):
-		response.WriteError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, app.ErrTournamentNotFound):
-		response.WriteError(w, http.StatusNotFound, "tournament not found")
-	default:
-		response.WriteError(w, http.StatusInternalServerError, "internal server error")
-	}
 }
 
 func (h *TournamentHandler) CreateTournament(w http.ResponseWriter, r *http.Request) {
@@ -51,9 +41,40 @@ func (h *TournamentHandler) CreateTournament(w http.ResponseWriter, r *http.Requ
 
 	id, err := h.service.CreateTournament(r.Context(), input)
 	if err != nil {
-		writeError(w, err)
+		handleServiceError(w, err)
 		return
 	}
 
 	response.WriteJSON(w, http.StatusCreated, CreateTournamentResponse{ID: id.String()})
+}
+
+func (h *TournamentHandler) GetTournamentByID(w http.ResponseWriter, r *http.Request) {
+	id, err := parseTournamentID(r)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+
+	tr, err := h.service.GetTournamentByID(r.Context(), id)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+
+	response.WriteJSON(w, http.StatusOK, newTournamentResponse(tr))
+}
+
+func (h *TournamentHandler) DeleteTournament(w http.ResponseWriter, r *http.Request) {
+	id, err := parseTournamentID(r)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+
+	if err := h.service.DeleteTournament(r.Context(), id); err != nil {
+		handleServiceError(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

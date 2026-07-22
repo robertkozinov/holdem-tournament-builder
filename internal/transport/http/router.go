@@ -12,7 +12,12 @@ func NewRouter(handler *TournamentHandler) http.Handler {
 
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+
 	r.Get("/health", HealthHandler)
+
 	r.Post("/tournaments", handler.CreateTournament)
+	r.Get("/tournaments/{id}", handler.GetTournamentByID)
+	r.Delete("/tournaments/{id}", handler.DeleteTournament)
+
 	return r
 }
