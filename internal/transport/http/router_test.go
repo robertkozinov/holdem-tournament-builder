@@ -12,6 +12,19 @@ import (
 )
 
 func TestNewRouter(t *testing.T) {
+	t.Run("serves frontend", func(t *testing.T) {
+		handler := NewTournamentHandler(&mockTournamentService{})
+		router := NewRouter(handler)
+
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		assert.Contains(t, rec.Body.String(), "Holdem Tournament Builder")
+	})
+
 	t.Run("registers health route", func(t *testing.T) {
 		handler := NewTournamentHandler(&mockTournamentService{})
 		router := NewRouter(handler)

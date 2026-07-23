@@ -59,6 +59,17 @@ func TestGenerateStackPlan(t *testing.T) {
 			want:    StackPlan{},
 			wantErr: ErrIncorrectChipSet,
 		},
+		{
+			name:    "duplicate chip denomination",
+			players: 4,
+			chips: []ChipDenomination{
+				{Value: 25, Count: 40},
+				{Value: 25, Count: 40},
+			},
+			style:   StyleStandard,
+			want:    StackPlan{},
+			wantErr: ErrDuplicateChipDenomination,
+		},
 	}
 
 	for _, tt := range tests {

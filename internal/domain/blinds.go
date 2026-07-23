@@ -14,6 +14,12 @@ type BlindLevel struct {
 
 var blindGrid = []int64{10, 20, 30, 40, 50, 60, 80, 100, 150, 200, 300, 400, 500, 600, 800, 1000, 1500, 2000, 3000}
 
+var styleLevelDuration = map[TournamentStyle]time.Duration{
+	StyleTurbo:    10 * time.Minute,
+	StyleStandard: 20 * time.Minute,
+	StyleDeep:     30 * time.Minute,
+}
+
 func niceBlind(raw int64) int64 {
 	best := blindGrid[0]
 	for _, v := range blindGrid {
@@ -36,8 +42,15 @@ func StartingBlind(stack int64, depth int64) int64 {
 }
 
 func GenerateBlinds(stack StackPlan, style TournamentStyle, duration time.Duration, levelDuration time.Duration) ([]BlindLevel, error) {
-	if duration <= 0 || levelDuration <= 0 {
+	if duration <= 0 || levelDuration < 0 {
 		return nil, ErrIncorrectDuration
+	}
+	if levelDuration == 0 {
+		var ok bool
+		levelDuration, ok = styleLevelDuration[style]
+		if !ok {
+			levelDuration = styleLevelDuration[StyleStandard]
+		}
 	}
 
 	depth, ok := styleDepth[style]

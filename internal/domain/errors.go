@@ -8,6 +8,7 @@ var ErrDuplicatePlayer = errors.New("names must not be duplicated")
 var ErrIncorrectBuyInAmount = errors.New("buy in cant be negative")
 var ErrEmptyChipSet = errors.New("must be at least one chip denomination")
 var ErrIncorrectChipSet = errors.New("chip denominations must have positive value and count")
+var ErrDuplicateChipDenomination = errors.New("chip denominations must not be duplicated")
 var ErrIncorrectDuration = errors.New("duration cant be zero or negative")
 var ErrIncorrectRebuyRules = errors.New("incorrect rebuy rules")
 
