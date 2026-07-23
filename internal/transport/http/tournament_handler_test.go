@@ -343,6 +343,33 @@ func TestTournamentHandler_GetTournamentByID(t *testing.T) {
 		require.NotNil(t, body.NextBlindLevel)
 		assert.Nil(t, body.LevelStartedAt)
 		assert.Nil(t, body.PausedAt)
+		assert.Empty(t, body.Transfers)
+	})
+
+	t.Run("returns transfers for finished tournament", func(t *testing.T) {
+		id := uuid.New()
+		tr := validTournamentWithID(t, id)
+		tr.Status = domain.StatusFinished
+		tr.Players = []string{"A"}
+		tr.Results = []domain.Result{
+			{Name: "B", Place: 2, Prize: 0},
+			{Name: "A", Place: 1, Prize: 2000},
+		}
+
+		srv := &mockTournamentService{getTr: tr}
+		router := NewRouter(NewTournamentHandler(srv))
+		req := httptest.NewRequest(http.MethodGet, "/tournaments/"+id.String(), nil)
+		rec := httptest.NewRecorder()
+
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var body TournamentResponse
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
+		assert.Equal(t, []TransferResponse{
+			{From: "B", To: "A", Amount: 1000},
+		}, body.Transfers)
 	})
 
 	t.Run("returns bad request when id is invalid", func(t *testing.T) {

@@ -47,6 +47,14 @@ func TestMinimizeTransfers(t *testing.T) {
 			},
 		},
 		{
+			name:     "chooses minimum number of transfers",
+			balances: map[string]int64{"A": -700, "B": -500, "C": 500, "D": 700},
+			want: []Transfer{
+				{From: "A", To: "D", Amount: 700},
+				{From: "B", To: "C", Amount: 500},
+			},
+		},
+		{
 			name:     "empty",
 			balances: map[string]int64{},
 			want:     nil,
