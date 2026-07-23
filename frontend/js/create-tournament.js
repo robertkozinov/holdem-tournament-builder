@@ -1,4 +1,10 @@
 import {createTournament} from "/js/api.js";
+import {
+    formatDateValue,
+    formatTimeValue,
+    isIntegerKeyAllowed,
+    isIntegerText
+} from "/js/input-formatters.mjs";
 
 const form = document.querySelector("#tournament-form");
 const dateInput = document.querySelector("#tournament-date");
@@ -23,6 +29,14 @@ const levelDurationPresets = {
 };
 
 export function initializeCreateTournament(onCreated) {
+    dateInput.addEventListener("input", () => {
+        dateInput.value = formatDateValue(dateInput.value);
+    });
+    timeInput.addEventListener("input", () => {
+        timeInput.value = formatTimeValue(timeInput.value);
+    });
+    form.addEventListener("keydown", restrictIntegerKey);
+    form.addEventListener("paste", restrictIntegerPaste);
     document.querySelector("#add-player-button").addEventListener("click", () => addPlayer(""));
     document.querySelector("#add-chip-button").addEventListener("click", () => addChip("", ""));
     document.querySelector("#basic-chip-preset-button").addEventListener("click", applyBasicChipPreset);
@@ -35,6 +49,32 @@ export function initializeCreateTournament(onCreated) {
     form.addEventListener("submit", (event) => submitForm(event, onCreated));
 
     return {reset: resetForm};
+}
+
+function restrictIntegerKey(event) {
+    if (!isIntegerInput(event.target)) {
+        return;
+    }
+
+    if (!isIntegerKeyAllowed(event.key, event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+    }
+}
+
+function restrictIntegerPaste(event) {
+    if (!isIntegerInput(event.target)) {
+        return;
+    }
+
+    const pastedText = event.clipboardData?.getData("text") ?? "";
+    if (!isIntegerText(pastedText)) {
+        event.preventDefault();
+    }
+}
+
+function isIntegerInput(target) {
+    return target instanceof HTMLInputElement
+        && target.matches('input[type="number"][step="1"]');
 }
 
 function resetForm() {
