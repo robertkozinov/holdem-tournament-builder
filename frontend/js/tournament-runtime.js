@@ -32,6 +32,8 @@ const elements = {
     players: document.querySelector("#active-players"),
     payouts: document.querySelector("#payouts-list"),
     results: document.querySelector("#results-list"),
+    transfersSection: document.querySelector("#transfers-section"),
+    transfers: document.querySelector("#transfers-list"),
     blinds: document.querySelector("#blind-structure")
 };
 
@@ -126,6 +128,7 @@ function renderTournament() {
     renderPlayers(tournament);
     renderPayouts(tournament);
     renderResults(tournament.results || []);
+    renderTransfers(tournament);
     renderBlindStructure(tournament);
     renderTimer();
 }
@@ -236,6 +239,30 @@ function renderResults(results) {
 
     [...results].sort((a, b) => a.place - b.place).forEach((result) => {
         elements.results.append(dataRow(`${result.place}. ${result.name}`, formatNumber(result.prize)));
+    });
+}
+
+function renderTransfers(tournament) {
+    const transfers = tournament.transfers || [];
+    elements.transfersSection.hidden = tournament.status !== "finished";
+    elements.transfers.replaceChildren();
+
+    if (tournament.status !== "finished") {
+        return;
+    }
+    if (transfers.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "Переводы не нужны";
+        elements.transfers.append(empty);
+        return;
+    }
+
+    transfers.forEach((transfer) => {
+        elements.transfers.append(dataRow(
+            `${transfer.from} → ${transfer.to}`,
+            formatNumber(transfer.amount)
+        ));
     });
 }
 

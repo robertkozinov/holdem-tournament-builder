@@ -26,8 +26,10 @@ func (t *Tournament) balances() map[string]int64 {
 
 func minimizeTransfers(balances map[string]int64) []Transfer {
 	var debtors, creditors []balance
+	var total int64
 
 	for name, b := range balances {
+		total += b
 		switch {
 		case b < 0:
 			debtors = append(debtors, balance{name, -b})
@@ -39,29 +41,53 @@ func minimizeTransfers(balances map[string]int64) []Transfer {
 	sort.Slice(debtors, func(i, j int) bool { return debtors[i].name < debtors[j].name })
 	sort.Slice(creditors, func(i, j int) bool { return creditors[i].name < creditors[j].name })
 
-	var transfers []Transfer
-	i, j := 0, 0
-	for i < len(debtors) && j < len(creditors) {
-		amount := min(debtors[i].amount, creditors[j].amount)
+	if total != 0 {
+		return nil
+	}
 
-		transfers = append(transfers, Transfer{
-			From:   debtors[i].name,
-			To:     creditors[j].name,
+	return findMinimumTransfers(debtors, creditors)
+}
+
+func findMinimumTransfers(debtors, creditors []balance) []Transfer {
+	debtorIndex := -1
+	for i := range debtors {
+		if debtors[i].amount > 0 {
+			debtorIndex = i
+			break
+		}
+	}
+	if debtorIndex < 0 {
+		return nil
+	}
+
+	var best []Transfer
+	for creditorIndex := range creditors {
+		if creditors[creditorIndex].amount == 0 {
+			continue
+		}
+
+		amount := min(debtors[debtorIndex].amount, creditors[creditorIndex].amount)
+		debtors[debtorIndex].amount -= amount
+		creditors[creditorIndex].amount -= amount
+
+		remaining := findMinimumTransfers(debtors, creditors)
+		candidate := make([]Transfer, 0, len(remaining)+1)
+		candidate = append(candidate, Transfer{
+			From:   debtors[debtorIndex].name,
+			To:     creditors[creditorIndex].name,
 			Amount: amount,
 		})
+		candidate = append(candidate, remaining...)
 
-		debtors[i].amount -= amount
-		creditors[j].amount -= amount
+		debtors[debtorIndex].amount += amount
+		creditors[creditorIndex].amount += amount
 
-		if debtors[i].amount == 0 {
-			i++
-		}
-		if creditors[j].amount == 0 {
-			j++
+		if best == nil || len(candidate) < len(best) {
+			best = candidate
 		}
 	}
 
-	return transfers
+	return best
 }
 
 func (t *Tournament) CalculateTransfers() []Transfer {

@@ -26,6 +26,13 @@ type TournamentResponse struct {
 	PausedAt          *time.Time           `json:"paused_at,omitempty"`
 	Status            string               `json:"status"`
 	Results           []ResultResponse     `json:"results"`
+	Transfers         []TransferResponse   `json:"transfers"`
+}
+
+type TransferResponse struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Amount int64  `json:"amount"`
 }
 
 type ChipResponse struct {
@@ -75,6 +82,18 @@ func newTournamentResponse(t *domain.Tournament) TournamentResponse {
 		nextBlind = &resp
 	}
 
+	transfers := make([]TransferResponse, 0)
+
+	if t.Status == domain.StatusFinished {
+		for _, transfer := range t.CalculateTransfers() {
+			transfers = append(transfers, TransferResponse{
+				From:   transfer.From,
+				To:     transfer.To,
+				Amount: transfer.Amount,
+			})
+		}
+	}
+
 	return TournamentResponse{
 		ID:                t.ID.String(),
 		Name:              t.Name,
@@ -96,6 +115,7 @@ func newTournamentResponse(t *domain.Tournament) TournamentResponse {
 		PausedAt:          timePtr(t.PausedAt),
 		Status:            tournamentStatusToString(t.Status),
 		Results:           newResultResponses(t.Results),
+		Transfers:         transfers,
 	}
 }
 
