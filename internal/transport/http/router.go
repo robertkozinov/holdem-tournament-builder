@@ -1,6 +1,7 @@
 package http
 
 import (
+	appfrontend "holdem-tournament-builder/frontend"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -26,6 +27,9 @@ func NewRouter(handler *TournamentHandler) http.Handler {
 	r.Post("/tournaments/{id}/level-up", handler.LevelUpTournament)
 	r.Post("/tournaments/{id}/rebuy", handler.AddRebuy)
 	r.Post("/tournaments/{id}/knockout", handler.KnockoutPlayer)
+
+	fileServer := http.FileServer(http.FS(appfrontend.Files))
+	r.Handle("/*", fileServer)
 
 	return r
 }

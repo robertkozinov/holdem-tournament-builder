@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#19211d">
+    <title>Holdem Tournament Builder</title>
+    <link rel="stylesheet" href="/vendor/bootstrap.min.css">
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="app-header border-bottom">
+    <nav class="container-xl d-flex align-items-center justify-content-between py-3">
+        <a class="brand d-flex align-items-center gap-2 text-decoration-none" href="/" aria-label="Holdem Tournament Builder">
+            <span class="brand__mark" aria-hidden="true">♠</span>
+            <span>Holdem Tournament Builder</span>
+        </a>
+        <button id="new-tournament-button" class="btn btn-outline-light btn-sm" type="button" hidden>
+            Новый турнир
+        </button>
+    </nav>
+</header>
+
+<main class="container-xl py-4 py-lg-5">
+    <div id="notice" class="alert mb-4" role="status" aria-live="polite" hidden></div>
+
+    <section id="create-view">
+        <div class="page-heading mb-4">
+            <span class="section-label">Настройка</span>
+            <h1 class="h2 mb-1">Новый турнир</h1>
+            <p class="text-secondary mb-0">Укажите состав, фишки и правила. Стек и блайнды рассчитаются автоматически.</p>
+        </div>
+
+        <form id="tournament-form" class="tournament-form bg-white border">
+            <section class="form-section" aria-labelledby="general-heading">
+                <div class="section-heading">
+                    <span class="step-number">01</span>
+                    <h2 id="general-heading" class="h5 mb-0">Основные параметры</h2>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12 col-lg-5">
+                        <label class="form-label" for="tournament-name-input">Название</label>
+                        <input id="tournament-name-input" class="form-control" name="name" type="text" maxlength="80" required>
+                    </div>
+                    <div class="col-7 col-sm-4 col-lg-3">
+                        <label class="form-label" for="tournament-date">Дата</label>
+                        <input id="tournament-date" class="form-control" name="date" type="text" inputmode="numeric" maxlength="10" pattern="[0-9]{2}/[0-9]{2}/[0-9]{4}" placeholder="ДД/ММ/ГГГГ" required>
+                    </div>
+                    <div class="col-5 col-sm-3 col-lg-2">
+                        <label class="form-label" for="tournament-time">Время</label>
+                        <input id="tournament-time" class="form-control" name="time" type="text" inputmode="numeric" maxlength="5" pattern="(?:[01][0-9]|2[0-3]):[0-5][0-9]" placeholder="ЧЧ:ММ" required>
+                    </div>
+                    <div class="col-12 col-sm-5 col-lg-2 d-flex align-items-end">
+                        <button id="set-current-date-button" class="btn btn-outline-secondary w-100" type="button">Сейчас</button>
+                    </div>
+                    <div class="col-12 col-sm-4">
+                        <label class="form-label" for="buy-in-input">Buy-in</label>
+                        <input id="buy-in-input" class="form-control" name="buy_in_amount" type="number" min="0" step="1" required>
+                    </div>
+                    <div class="col-12 col-sm-4">
+                        <label class="form-label" for="style-select">Стиль</label>
+                        <select id="style-select" class="form-select" name="style" required>
+                            <option value="" selected disabled>Выберите стиль</option>
+                            <option value="standard">Standard</option>
+                            <option value="turbo">Turbo</option>
+                            <option value="deep">Deep</option>
+                        </select>
+                    </div>
+                    <div class="col-6 col-sm-4">
+                        <label class="form-label" for="duration-input">Длительность турнира, мин</label>
+                        <input id="duration-input" class="form-control" name="duration_minutes" type="number" min="2" step="1" required>
+                    </div>
+                    <div class="col-6 col-sm-4">
+                        <label class="form-label" for="level-duration-input">Длительность уровня, мин</label>
+                        <input id="level-duration-input" class="form-control" name="level_duration_minutes" type="number" min="1" step="1">
+                    </div>
+                </div>
+            </section>
+
+            <section class="form-section" aria-labelledby="players-heading">
+                <div class="section-heading section-heading--actions">
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="step-number">02</span>
+                        <h2 id="players-heading" class="h5 mb-0">Игроки</h2>
+                    </div>
+                    <button id="add-player-button" class="btn btn-outline-secondary btn-sm" type="button">+ Добавить</button>
+                </div>
+                <div id="players-list" class="repeat-list repeat-list--players"></div>
+            </section>
+
+            <section class="form-section" aria-labelledby="chips-heading">
+                <div class="section-heading section-heading--actions">
+                    <div class="d-flex align-items-center gap-3">
+                        <span class="step-number">03</span>
+                        <h2 id="chips-heading" class="h5 mb-0">Набор фишек</h2>
+                    </div>
+                    <div class="d-flex flex-wrap justify-content-end gap-2">
+                        <button id="basic-chip-preset-button" class="btn btn-outline-secondary btn-sm" type="button">Базовый пресет</button>
+                        <button id="add-chip-button" class="btn btn-outline-secondary btn-sm" type="button">+ Номинал</button>
+                    </div>
+                </div>
+                <div class="chip-labels text-secondary small" aria-hidden="true">
+                    <span>Номинал</span>
+                    <span>Количество</span>
+                    <span></span>
+                </div>
+                <div id="chips-list" class="repeat-list"></div>
+            </section>
+
+            <section class="form-section" aria-labelledby="rules-heading">
+                <div class="section-heading">
+                    <span class="step-number">04</span>
+                    <h2 id="rules-heading" class="h5 mb-0">Ребаи и выплаты</h2>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-12 col-lg-6">
+                        <div class="setting-block border h-100">
+                            <div class="form-check form-switch mb-3">
+                                <input id="rebuy-allowed" class="form-check-input" name="rebuy_allowed" type="checkbox" role="switch">
+                                <label class="form-check-label" for="rebuy-allowed">
+                                    <strong class="d-block">Ребаи разрешены</strong>
+                                    <small class="text-secondary">Стоимость и стек равны buy-in</small>
+                                </label>
+                            </div>
+                            <label class="form-label" for="rebuy-max-level">До уровня включительно</label>
+                            <input id="rebuy-max-level" class="form-control compact-control" name="rebuy_max_level" type="number" min="1" step="1" required>
+                        </div>
+                    </div>
+
+                    <div class="col-12 col-lg-6">
+                        <div class="setting-block border h-100">
+                            <span class="form-label d-block">Режим выплат</span>
+                            <div class="btn-group mb-3" role="group" aria-label="Режим выплат">
+                                <input id="payout-default" class="btn-check" type="radio" name="payout_mode" value="default" checked>
+                                <label class="btn btn-outline-secondary" for="payout-default">Автоматически</label>
+                                <input id="payout-custom" class="btn-check" type="radio" name="payout_mode" value="custom">
+                                <label class="btn btn-outline-secondary" for="payout-custom">Вручную</label>
+                            </div>
+                            <label id="custom-payout-field" class="d-block" hidden>
+                                <span class="form-label">Buy-in для мест со второго</span>
+                                <input class="form-control" name="fixed_buy_ins" type="text" placeholder="2, 1" disabled>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="form-footer d-flex flex-column flex-sm-row align-items-sm-center justify-content-between gap-3">
+                <p id="form-error" class="text-danger mb-0" role="alert"></p>
+                <button id="create-button" class="btn btn-success btn-lg ms-sm-auto" type="submit">Создать турнир</button>
+            </div>
+        </form>
+    </section>
+
+    <section id="tournament-view" hidden>
+        <div class="tournament-heading d-flex flex-column flex-md-row align-items-md-start justify-content-between gap-3 mb-4">
+            <div>
+                <div class="d-flex align-items-center flex-wrap gap-3 mb-1">
+                    <h1 id="tournament-name" class="h2 mb-0">Турнир</h1>
+                    <span id="tournament-status" class="badge status-badge"></span>
+                </div>
+                <p id="tournament-meta" class="text-secondary mb-0"></p>
+            </div>
+            <button id="delete-tournament-button" class="btn btn-outline-danger btn-sm" type="button">Удалить</button>
+        </div>
+
+        <section class="live-board" aria-label="Текущее состояние турнира">
+            <div class="level-panel">
+                <span class="panel-label">Текущий уровень</span>
+                <div id="current-blinds" class="blind-value">— / —</div>
+                <div id="current-ante" class="ante-value">Ante —</div>
+            </div>
+            <div id="timer-panel" class="timer-panel">
+                <span class="panel-label">До следующего уровня</span>
+                <time id="level-timer" class="level-timer">00:00</time>
+                <span id="level-counter" class="level-counter">Уровень —</span>
+            </div>
+            <div class="level-panel level-panel--next">
+                <span class="panel-label">Следующий уровень</span>
+                <div id="next-blinds" class="blind-value blind-value--next">— / —</div>
+                <div id="next-ante" class="ante-value">Ante —</div>
+            </div>
+        </section>
+
+        <div class="runtime-actions d-flex flex-wrap gap-2 py-3">
+            <button id="start-button" class="btn btn-success" type="button">Старт</button>
+            <button id="pause-button" class="btn btn-warning" type="button" hidden>Пауза</button>
+            <button id="resume-button" class="btn btn-success" type="button" hidden>Продолжить</button>
+            <button id="level-up-button" class="btn btn-outline-secondary" type="button" hidden>Следующий уровень</button>
+            <button id="finish-button" class="btn btn-success" type="button" hidden>Завершить</button>
+        </div>
+
+        <section class="summary-strip border bg-white mb-4" aria-label="Сводка турнира">
+            <div><span>Банк</span><strong id="summary-pot">0</strong></div>
+            <div><span>В игре</span><strong id="summary-players">0</strong></div>
+            <div><span>Стартовый стек</span><strong id="summary-stack">0</strong></div>
+            <div><span>Buy-in</span><strong id="summary-buy-in">0</strong></div>
+        </section>
+
+        <section class="content-section bg-white border mb-4" aria-labelledby="stack-plan-heading">
+            <div class="content-section__heading">
+                <h2 id="stack-plan-heading" class="h5 mb-0">Фишки на одного игрока</h2>
+            </div>
+            <div id="stack-distribution" class="stack-distribution"></div>
+        </section>
+
+        <div class="row g-4 mb-4">
+            <div class="col-12 col-lg-8">
+                <section class="content-section bg-white border h-100" aria-labelledby="active-players-heading">
+                    <div class="content-section__heading d-flex flex-wrap align-items-center justify-content-between gap-2">
+                        <h2 id="active-players-heading" class="h5 mb-0">Активные игроки</h2>
+                        <span id="rebuy-window" class="text-secondary small"></span>
+                    </div>
+                    <div id="active-players" class="player-list"></div>
+                </section>
+            </div>
+            <div class="col-12 col-lg-4">
+                <section class="content-section bg-white border h-100" aria-labelledby="payouts-heading">
+                    <div class="content-section__heading">
+                        <h2 id="payouts-heading" class="h5 mb-0">Выплаты</h2>
+                    </div>
+                    <div id="payouts-list" class="data-list"></div>
+                    <div class="content-section__heading results-heading">
+                        <h2 class="h5 mb-0">Результаты</h2>
+                    </div>
+                    <div id="results-list" class="data-list"></div>
+                </section>
+            </div>
+        </div>
+
+        <section class="content-section bg-white border" aria-labelledby="structure-heading">
+            <div class="content-section__heading">
+                <h2 id="structure-heading" class="h5 mb-0">Структура блайндов</h2>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                    <tr>
+                        <th>Уровень</th>
+                        <th>SB</th>
+                        <th>BB</th>
+                        <th>Ante</th>
+                        <th>Минут</th>
+                    </tr>
+                    </thead>
+                    <tbody id="blind-structure"></tbody>
+                </table>
+            </div>
+        </section>
+    </section>
+</main>
+
+<template id="player-row-template">
+    <div class="repeat-row repeat-row--player">
+        <label class="w-100">
+            <span class="form-label player-row-label">Игрок</span>
+            <input class="form-control" data-player-name type="text" maxlength="60" required>
+        </label>
+        <button class="btn btn-outline-danger remove-button" data-remove-player type="button" title="Удалить игрока" aria-label="Удалить игрока">×</button>
+    </div>
+</template>
+
+<template id="chip-row-template">
+    <div class="repeat-row repeat-row--chip">
+        <label>
+            <span class="visually-hidden">Номинал</span>
+            <input class="form-control" data-chip-value type="number" min="1" step="1" required>
+        </label>
+        <label>
+            <span class="visually-hidden">Количество</span>
+            <input class="form-control" data-chip-count type="number" min="1" step="1" required>
+        </label>
+        <button class="btn btn-outline-danger remove-button" data-remove-chip type="button" title="Удалить номинал" aria-label="Удалить номинал">×</button>
+    </div>
+</template>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
