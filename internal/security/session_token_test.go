@@ -40,3 +40,46 @@ func TestSessionTokenGenerator_Generate(t *testing.T) {
 		assert.NotEqual(t, firstHash, secondHash)
 	})
 }
+
+func TestSessionTokenGenerator_Hash(t *testing.T) {
+	t.Run("hashes token", func(t *testing.T) {
+		generator := SessionTokenGenerator{}
+
+		rawToken := "session-token"
+
+		tokenHash := generator.Hash(rawToken)
+		assert.NotNil(t, tokenHash)
+		assert.Len(t, tokenHash, sha256.Size)
+
+		expectedHash := sha256.Sum256([]byte(rawToken))
+		assert.Equal(t, expectedHash[:], tokenHash)
+	})
+	t.Run("different raw tokens give different hashes", func(t *testing.T) {
+		generator := SessionTokenGenerator{}
+
+		firstRawToken := "first-session-token"
+		secondRawToken := "second-session-token"
+
+		firstTokenHash := generator.Hash(firstRawToken)
+		secondTokenHash := generator.Hash(secondRawToken)
+
+		assert.NotNil(t, firstTokenHash)
+		assert.NotNil(t, secondTokenHash)
+
+		assert.NotEqual(t, firstTokenHash, secondTokenHash)
+	})
+	t.Run("same raw tokens give same hashes", func(t *testing.T) {
+		generator := SessionTokenGenerator{}
+
+		firstRawToken := "session-token"
+		secondRawToken := "session-token"
+
+		firstTokenHash := generator.Hash(firstRawToken)
+		secondTokenHash := generator.Hash(secondRawToken)
+
+		assert.NotNil(t, firstTokenHash)
+		assert.NotNil(t, secondTokenHash)
+
+		assert.Equal(t, firstTokenHash, secondTokenHash)
+	})
+}

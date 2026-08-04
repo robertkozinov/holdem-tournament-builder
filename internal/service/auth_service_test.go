@@ -15,17 +15,49 @@ import (
 )
 
 type mockAuthRepository struct {
-	called  bool
-	user    domain.User
-	session domain.Session
-	err     error
+	createUserWithSession struct {
+		called  bool
+		user    domain.User
+		session domain.Session
+		err     error
+	}
+
+	getUserByUsername struct {
+		called   bool
+		username string
+		user     *domain.User
+		err      error
+	}
+
+	createSession struct {
+		called  bool
+		session domain.Session
+		err     error
+	}
 }
 
 func (r *mockAuthRepository) CreateUserWithSession(ctx context.Context, user domain.User, session domain.Session) error {
-	r.called = true
-	r.user = user
-	r.session = session
-	return r.err
+	r.createUserWithSession.called = true
+	r.createUserWithSession.user = user
+	r.createUserWithSession.session = session
+	return r.createUserWithSession.err
+}
+
+func (r *mockAuthRepository) GetUserByUsername(ctx context.Context, username string) (*domain.User, error) {
+	r.getUserByUsername.called = true
+	r.getUserByUsername.username = username
+
+	if r.getUserByUsername.err != nil {
+		return nil, r.getUserByUsername.err
+	}
+
+	return r.getUserByUsername.user, nil
+}
+
+func (r *mockAuthRepository) CreateSession(ctx context.Context, session domain.Session) error {
+	r.createSession.called = true
+	r.createSession.session = session
+	return r.createSession.err
 }
 
 type mockPasswordHasher struct {
@@ -33,6 +65,12 @@ type mockPasswordHasher struct {
 	password     string
 	passwordHash string
 	err          error
+
+	verifyCalled       bool
+	verifyPassword     string
+	verifyPasswordHash string
+	verifyResult       bool
+	verifyErr          error
 }
 
 func (h *mockPasswordHasher) Hash(password string) (string, error) {
@@ -42,19 +80,32 @@ func (h *mockPasswordHasher) Hash(password string) (string, error) {
 }
 
 func (h *mockPasswordHasher) Verify(password string, encodedHash string) (bool, error) {
-	return false, nil
+	h.verifyCalled = true
+	h.verifyPassword = password
+	h.verifyPasswordHash = encodedHash
+
+	return h.verifyResult, h.verifyErr
 }
 
 type mockSessionTokenGenerator struct {
-	called    bool
-	rawToken  string
-	tokenHash []byte
-	err       error
+	generatorCalled    bool
+	generatorRawToken  string
+	generatorTokenHash []byte
+	generatorErr       error
+
+	hashCalled    bool
+	hashRawToken  string
+	hashTokenHash []byte
 }
 
 func (g *mockSessionTokenGenerator) Generate() (rawToken string, tokenHash []byte, err error) {
-	g.called = true
-	return g.rawToken, g.tokenHash, g.err
+	g.generatorCalled = true
+	return g.generatorRawToken, g.generatorTokenHash, g.generatorErr
+}
+func (g *mockSessionTokenGenerator) Hash(rawToken string) []byte {
+	g.hashCalled = true
+	g.hashRawToken = rawToken
+	return g.hashTokenHash
 }
 
 func TestAuthService_Register(t *testing.T) {
@@ -67,8 +118,8 @@ func TestAuthService_Register(t *testing.T) {
 			passwordHash: "password-hash",
 		}
 		generator := &mockSessionTokenGenerator{
-			rawToken:  "session-token",
-			tokenHash: tokenHash,
+			generatorRawToken:  "session-token",
+			generatorTokenHash: tokenHash,
 		}
 
 		service := NewAuthService(repo, hasher, generator)
@@ -85,24 +136,24 @@ func TestAuthService_Register(t *testing.T) {
 		assert.True(t, hasher.called)
 		assert.Equal(t, "RiverCard7!", hasher.password)
 
-		assert.True(t, generator.called)
-		assert.True(t, repo.called)
+		assert.True(t, generator.generatorCalled)
+		assert.True(t, repo.createUserWithSession.called)
 
-		assert.NotEqual(t, uuid.Nil, repo.user.ID)
-		assert.Equal(t, "tournament_admin", repo.user.Username)
-		assert.Equal(t, "password-hash", repo.user.PasswordHash)
-		assert.Equal(t, now, repo.user.CreatedAt)
-		assert.Equal(t, now, repo.user.UpdatedAt)
+		assert.NotEqual(t, uuid.Nil, repo.createUserWithSession.user.ID)
+		assert.Equal(t, "tournament_admin", repo.createUserWithSession.user.Username)
+		assert.Equal(t, "password-hash", repo.createUserWithSession.user.PasswordHash)
+		assert.Equal(t, now, repo.createUserWithSession.user.CreatedAt)
+		assert.Equal(t, now, repo.createUserWithSession.user.UpdatedAt)
 
-		assert.Equal(t, repo.user.ID, repo.session.UserID)
-		assert.Equal(t, tokenHash, repo.session.TokenHash)
-		assert.Equal(t, now, repo.session.CreatedAt)
-		assert.Equal(t, now.Add(30*24*time.Hour), repo.session.ExpiresAt)
+		assert.Equal(t, repo.createUserWithSession.user.ID, repo.createUserWithSession.session.UserID)
+		assert.Equal(t, tokenHash, repo.createUserWithSession.session.TokenHash)
+		assert.Equal(t, now, repo.createUserWithSession.session.CreatedAt)
+		assert.Equal(t, now.Add(30*24*time.Hour), repo.createUserWithSession.session.ExpiresAt)
 
-		assert.Equal(t, repo.user.ID, result.UserID)
+		assert.Equal(t, repo.createUserWithSession.user.ID, result.UserID)
 		assert.Equal(t, "tournament_admin", result.Username)
 		assert.Equal(t, "session-token", result.Token)
-		assert.Equal(t, repo.session.ExpiresAt, result.ExpiresAt)
+		assert.Equal(t, repo.createUserWithSession.session.ExpiresAt, result.ExpiresAt)
 	})
 
 	t.Run("returns error when password hashing fails", func(t *testing.T) {
@@ -127,8 +178,8 @@ func TestAuthService_Register(t *testing.T) {
 
 		assert.True(t, hasher.called)
 		assert.Equal(t, "RiverCard7!", hasher.password)
-		assert.False(t, generator.called)
-		assert.False(t, repo.called)
+		assert.False(t, generator.generatorCalled)
+		assert.False(t, repo.createUserWithSession.called)
 	})
 
 	t.Run("returns error when token generation fails", func(t *testing.T) {
@@ -139,7 +190,7 @@ func TestAuthService_Register(t *testing.T) {
 			passwordHash: "password-hash",
 		}
 		generator := &mockSessionTokenGenerator{
-			err: generateErr,
+			generatorErr: generateErr,
 		}
 
 		service := NewAuthService(repo, hasher, generator)
@@ -156,23 +207,22 @@ func TestAuthService_Register(t *testing.T) {
 		assert.Equal(t, AuthResult{}, result)
 
 		assert.True(t, hasher.called)
-		assert.True(t, generator.called)
-		assert.False(t, repo.called)
+		assert.True(t, generator.generatorCalled)
+		assert.False(t, repo.createUserWithSession.called)
 	})
 
 	t.Run("returns error when repository fails", func(t *testing.T) {
 		repoErr := errors.New("repository error")
 		tokenHash := []byte{1, 2, 3, 4}
 
-		repo := &mockAuthRepository{
-			err: repoErr,
-		}
+		repo := &mockAuthRepository{}
+		repo.createUserWithSession.err = repoErr
 		hasher := &mockPasswordHasher{
 			passwordHash: "password-hash",
 		}
 		generator := &mockSessionTokenGenerator{
-			rawToken:  "session-token",
-			tokenHash: tokenHash,
+			generatorRawToken:  "session-token",
+			generatorTokenHash: tokenHash,
 		}
 
 		service := NewAuthService(repo, hasher, generator)
@@ -189,8 +239,8 @@ func TestAuthService_Register(t *testing.T) {
 		assert.Equal(t, AuthResult{}, result)
 
 		assert.True(t, hasher.called)
-		assert.True(t, generator.called)
-		assert.True(t, repo.called)
+		assert.True(t, generator.generatorCalled)
+		assert.True(t, repo.createUserWithSession.called)
 	})
 
 	t.Run("returns error when username is invalid", func(t *testing.T) {
@@ -244,8 +294,8 @@ func TestAuthService_Register(t *testing.T) {
 				assert.Equal(t, AuthResult{}, result)
 
 				assert.False(t, hasher.called)
-				assert.False(t, generator.called)
-				assert.False(t, repo.called)
+				assert.False(t, generator.generatorCalled)
+				assert.False(t, repo.createUserWithSession.called)
 			})
 		}
 	})
@@ -301,9 +351,309 @@ func TestAuthService_Register(t *testing.T) {
 				assert.Equal(t, AuthResult{}, result)
 
 				assert.False(t, hasher.called)
-				assert.False(t, generator.called)
-				assert.False(t, repo.called)
+				assert.False(t, generator.generatorCalled)
+				assert.False(t, repo.createUserWithSession.called)
 			})
 		}
+	})
+}
+
+func TestAuthService_Login(t *testing.T) {
+	now := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
+
+	t.Run("login user", func(t *testing.T) {
+		userID := uuid.New()
+		tokenHash := []byte{1, 2, 3, 4}
+
+		user := &domain.User{
+			ID:           userID,
+			Username:     "tournament_admin",
+			PasswordHash: "password-hash",
+		}
+
+		repo := &mockAuthRepository{}
+		repo.getUserByUsername.user = user
+
+		hasher := &mockPasswordHasher{
+			verifyResult: true,
+		}
+
+		generator := &mockSessionTokenGenerator{
+			generatorRawToken:  "session-token",
+			generatorTokenHash: tokenHash,
+		}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"  Tournament_Admin ",
+			"RiverCard7!",
+			now,
+		)
+
+		require.NoError(t, err)
+
+		assert.True(t, repo.getUserByUsername.called)
+		assert.Equal(t, "tournament_admin", repo.getUserByUsername.username)
+
+		assert.True(t, hasher.verifyCalled)
+		assert.Equal(t, "RiverCard7!", hasher.verifyPassword)
+		assert.Equal(t, "password-hash", hasher.verifyPasswordHash)
+
+		assert.True(t, generator.generatorCalled)
+
+		assert.True(t, repo.createSession.called)
+		assert.Equal(t, tokenHash, repo.createSession.session.TokenHash)
+		assert.Equal(t, userID, repo.createSession.session.UserID)
+		assert.Equal(t, now, repo.createSession.session.CreatedAt)
+		assert.Equal(t, now.Add(sessionLifetime), repo.createSession.session.ExpiresAt)
+
+		assert.Equal(t, AuthResult{
+			UserID:    userID,
+			Username:  "tournament_admin",
+			Token:     "session-token",
+			ExpiresAt: now.Add(sessionLifetime),
+		}, result)
+
+		assert.False(t, hasher.called)
+	})
+
+	t.Run("returns invalid credentials when password is incorrect", func(t *testing.T) {
+		user := &domain.User{
+			ID:           uuid.New(),
+			Username:     "tournament_admin",
+			PasswordHash: "password-hash",
+		}
+
+		repo := &mockAuthRepository{}
+		repo.getUserByUsername.user = user
+
+		hasher := &mockPasswordHasher{
+			verifyResult: false,
+		}
+		generator := &mockSessionTokenGenerator{}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"tournament_admin",
+			"WrongPassword7!",
+			now,
+		)
+
+		require.ErrorIs(t, err, app.ErrInvalidCredentials)
+		assert.Equal(t, AuthResult{}, result)
+
+		assert.True(t, repo.getUserByUsername.called)
+		assert.True(t, hasher.verifyCalled)
+		assert.Equal(t, "WrongPassword7!", hasher.verifyPassword)
+		assert.Equal(t, "password-hash", hasher.verifyPasswordHash)
+		assert.False(t, generator.generatorCalled)
+		assert.False(t, repo.createSession.called)
+	})
+
+	t.Run("returns invalid credentials when user does not exist", func(t *testing.T) {
+		repo := &mockAuthRepository{}
+		repo.getUserByUsername.err = app.ErrUserNotFound
+
+		hasher := &mockPasswordHasher{}
+		generator := &mockSessionTokenGenerator{}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"  Missing_User ",
+			"RiverCard7!",
+			now,
+		)
+
+		assert.Equal(t, AuthResult{}, result)
+		assert.True(t, repo.getUserByUsername.called)
+		assert.Equal(t, "missing_user", repo.getUserByUsername.username)
+		assert.False(t, hasher.verifyCalled)
+		assert.False(t, generator.generatorCalled)
+		assert.False(t, repo.createSession.called)
+		require.ErrorIs(t, err, app.ErrInvalidCredentials)
+	})
+
+	t.Run("returns error when get user fails", func(t *testing.T) {
+		repoErr := errors.New("repository error")
+
+		repo := &mockAuthRepository{}
+		repo.getUserByUsername.err = repoErr
+
+		hasher := &mockPasswordHasher{}
+		generator := &mockSessionTokenGenerator{}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"tournament_admin",
+			"RiverCard7!",
+			now,
+		)
+
+		require.ErrorIs(t, err, repoErr)
+		assert.Equal(t, AuthResult{}, result)
+		assert.True(t, repo.getUserByUsername.called)
+		assert.False(t, hasher.verifyCalled)
+		assert.False(t, generator.generatorCalled)
+		assert.False(t, repo.createSession.called)
+	})
+
+	t.Run("returns error when password verification fails", func(t *testing.T) {
+		verifyErr := errors.New("verify error")
+
+		user := &domain.User{
+			ID:           uuid.New(),
+			Username:     "tournament_admin",
+			PasswordHash: "password-hash",
+		}
+
+		repo := &mockAuthRepository{}
+		repo.getUserByUsername.user = user
+
+		hasher := &mockPasswordHasher{
+			verifyErr: verifyErr,
+		}
+		generator := &mockSessionTokenGenerator{}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"tournament_admin",
+			"RiverCard7!",
+			now,
+		)
+
+		require.ErrorIs(t, err, verifyErr)
+		assert.Equal(t, AuthResult{}, result)
+		assert.True(t, repo.getUserByUsername.called)
+		assert.True(t, hasher.verifyCalled)
+		assert.False(t, generator.generatorCalled)
+		assert.False(t, repo.createSession.called)
+	})
+
+	t.Run("returns error when token generation fails", func(t *testing.T) {
+		generatorErr := errors.New("generator error")
+
+		user := &domain.User{
+			ID:           uuid.New(),
+			Username:     "tournament_admin",
+			PasswordHash: "password-hash",
+		}
+
+		repo := &mockAuthRepository{}
+		repo.getUserByUsername.user = user
+
+		hasher := &mockPasswordHasher{
+			verifyResult: true,
+		}
+		generator := &mockSessionTokenGenerator{
+			generatorErr: generatorErr,
+		}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"tournament_admin",
+			"RiverCard7!",
+			now,
+		)
+
+		require.ErrorIs(t, err, generatorErr)
+		assert.Equal(t, AuthResult{}, result)
+		assert.True(t, repo.getUserByUsername.called)
+		assert.True(t, hasher.verifyCalled)
+		assert.True(t, generator.generatorCalled)
+		assert.False(t, repo.createSession.called)
+	})
+
+	t.Run("returns error when create session fails", func(t *testing.T) {
+		repoErr := errors.New("repository error")
+
+		user := &domain.User{
+			ID:           uuid.New(),
+			Username:     "tournament_admin",
+			PasswordHash: "password-hash",
+		}
+
+		repo := &mockAuthRepository{}
+		repo.getUserByUsername.user = user
+		repo.createSession.err = repoErr
+
+		hasher := &mockPasswordHasher{
+			verifyResult: true,
+		}
+		generator := &mockSessionTokenGenerator{
+			generatorRawToken:  "session-token",
+			generatorTokenHash: []byte{1, 2, 3, 4},
+		}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"tournament_admin",
+			"RiverCard7!",
+			now,
+		)
+
+		require.ErrorIs(t, err, repoErr)
+		assert.Equal(t, AuthResult{}, result)
+		assert.True(t, repo.getUserByUsername.called)
+		assert.True(t, hasher.verifyCalled)
+		assert.True(t, generator.generatorCalled)
+		assert.True(t, repo.createSession.called)
+	})
+
+	t.Run("returns invalid credentials when username is invalid", func(t *testing.T) {
+		repo := &mockAuthRepository{}
+		hasher := &mockPasswordHasher{}
+		generator := &mockSessionTokenGenerator{}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"x",
+			"RiverCard7!",
+			now,
+		)
+
+		require.ErrorIs(t, err, app.ErrInvalidCredentials)
+		assert.Equal(t, AuthResult{}, result)
+		assert.False(t, repo.getUserByUsername.called)
+		assert.False(t, hasher.verifyCalled)
+		assert.False(t, generator.generatorCalled)
+		assert.False(t, repo.createSession.called)
+	})
+
+	t.Run("returns invalid credentials when password is invalid", func(t *testing.T) {
+		repo := &mockAuthRepository{}
+		hasher := &mockPasswordHasher{}
+		generator := &mockSessionTokenGenerator{}
+
+		service := NewAuthService(repo, hasher, generator)
+
+		result, err := service.Login(
+			context.Background(),
+			"tournament_admin",
+			"short",
+			now,
+		)
+
+		require.ErrorIs(t, err, app.ErrInvalidCredentials)
+		assert.Equal(t, AuthResult{}, result)
+		assert.False(t, repo.getUserByUsername.called)
+		assert.False(t, hasher.verifyCalled)
+		assert.False(t, generator.generatorCalled)
+		assert.False(t, repo.createSession.called)
 	})
 }

@@ -11,4 +11,6 @@ var (
 	ErrInvalidUsername       = errors.New("invalid username")
 	ErrInvalidPassword       = errors.New("invalid password")
 	ErrUsernameAlreadyExists = errors.New("username already exists")
+	ErrUserNotFound          = errors.New("user not found")
+	ErrInvalidCredentials    = errors.New("invalid credentials")
 )

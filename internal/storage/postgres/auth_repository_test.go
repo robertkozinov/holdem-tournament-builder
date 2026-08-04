@@ -206,3 +206,86 @@ func TestAuthRepository_CreateUserWithSession(t *testing.T) {
 		require.ErrorIs(t, err, app.ErrUsernameAlreadyExists)
 	})
 }
+
+func TestAuthRepository_GetUserByUsername(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	t.Run("gets user by username", func(t *testing.T) {
+		ctx, pool, repo := setupAuthRepositoryTest(t)
+
+		user := domain.User{
+			ID:           uuid.New(),
+			Username:     "table_host",
+			PasswordHash: "password-hash",
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}
+
+		_, err := pool.Exec(ctx,
+			`INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`,
+			user.ID, user.Username, user.PasswordHash, user.CreatedAt, user.UpdatedAt,
+		)
+		require.NoError(t, err)
+
+		gotUser, err := repo.GetUserByUsername(ctx, user.Username)
+		require.NoError(t, err)
+		require.NotNil(t, gotUser)
+		assert.Equal(t, user.ID, gotUser.ID)
+		assert.Equal(t, user.Username, gotUser.Username)
+		assert.Equal(t, user.PasswordHash, gotUser.PasswordHash)
+		assert.True(t, user.CreatedAt.Equal(gotUser.CreatedAt))
+		assert.True(t, user.UpdatedAt.Equal(gotUser.UpdatedAt))
+	})
+	t.Run("returns user not found when user does not exist", func(t *testing.T) {
+		ctx, _, repo := setupAuthRepositoryTest(t)
+
+		user, err := repo.GetUserByUsername(ctx, "missing_user")
+
+		require.ErrorIs(t, err, app.ErrUserNotFound)
+		assert.Nil(t, user)
+	})
+}
+
+func TestAuthRepository_CreateSession(t *testing.T) {
+	t.Run("creates session", func(t *testing.T) {
+		ctx, pool, repo := setupAuthRepositoryTest(t)
+
+		now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+		userID := uuid.New()
+
+		_, err := pool.Exec(ctx,
+			`INSERT INTO users (id, username, password_hash, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`,
+			userID, "table_host", "password-hash", now, now,
+		)
+		require.NoError(t, err)
+
+		tokenHash := sha256.Sum256([]byte("session-token"))
+		session := domain.Session{
+			TokenHash: tokenHash[:],
+			UserID:    userID,
+			CreatedAt: now,
+			ExpiresAt: now.Add(30 * 24 * time.Hour),
+		}
+
+		err = repo.CreateSession(ctx, session)
+		require.NoError(t, err)
+
+		var storedSession domain.Session
+
+		err = pool.QueryRow(ctx, `
+			SELECT token_hash, user_id, created_at, expires_at
+			FROM sessions
+			WHERE token_hash = $1
+		`, session.TokenHash).Scan(
+			&storedSession.TokenHash,
+			&storedSession.UserID,
+			&storedSession.CreatedAt,
+			&storedSession.ExpiresAt,
+		)
+		require.NoError(t, err)
+
+		assert.Equal(t, session.TokenHash, storedSession.TokenHash)
+		assert.Equal(t, session.UserID, storedSession.UserID)
+		assert.True(t, session.CreatedAt.Equal(storedSession.CreatedAt))
+		assert.True(t, session.ExpiresAt.Equal(storedSession.ExpiresAt))
+	})
+}

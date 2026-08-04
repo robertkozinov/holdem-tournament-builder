@@ -20,10 +20,12 @@ func (g *SessionTokenGenerator) Generate() (rawToken string, tokenHash []byte, e
 	}
 
 	rawToken = base64.RawURLEncoding.EncodeToString(token)
-
-	hash := sha256.Sum256([]byte(rawToken))
-
-	tokenHash = hash[:]
+	tokenHash = g.Hash(rawToken)
 
 	return rawToken, tokenHash, nil
+}
+
+func (g *SessionTokenGenerator) Hash(rawToken string) []byte {
+	hash := sha256.Sum256([]byte(rawToken))
+	return hash[:]
 }

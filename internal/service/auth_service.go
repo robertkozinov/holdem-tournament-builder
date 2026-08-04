@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"holdem-tournament-builder/internal/app"
 	"holdem-tournament-builder/internal/domain"
@@ -17,6 +18,8 @@ const sessionLifetime = 30 * 24 * time.Hour
 
 type AuthRepository interface {
 	CreateUserWithSession(ctx context.Context, user domain.User, session domain.Session) error
+	GetUserByUsername(ctx context.Context, username string) (*domain.User, error)
+	CreateSession(ctx context.Context, session domain.Session) error
 }
 
 type PasswordHasher interface {
@@ -26,6 +29,7 @@ type PasswordHasher interface {
 
 type SessionTokenGenerator interface {
 	Generate() (rawToken string, tokenHash []byte, err error)
+	Hash(rawToken string) []byte
 }
 
 type AuthService struct {
@@ -134,4 +138,57 @@ func (s *AuthService) Register(ctx context.Context, username, password string, n
 	}
 
 	return res, nil
+}
+
+func (s *AuthService) Login(ctx context.Context, username, password string, now time.Time) (AuthResult, error) {
+	normalizedUsername := normalizeUsername(username)
+	if err := validateUsername(normalizedUsername); err != nil {
+		return AuthResult{}, app.ErrInvalidCredentials
+	}
+	if err := validatePassword(password); err != nil {
+		return AuthResult{}, app.ErrInvalidCredentials
+	}
+
+	user, err := s.repo.GetUserByUsername(ctx, normalizedUsername)
+	if err != nil {
+		if errors.Is(err, app.ErrUserNotFound) {
+			return AuthResult{}, app.ErrInvalidCredentials
+		}
+		return AuthResult{}, fmt.Errorf("get user by username: %w", err)
+	}
+
+	valid, err := s.hasher.Verify(password, user.PasswordHash)
+	if err != nil {
+		return AuthResult{}, fmt.Errorf("verify password: %w", err)
+	}
+	if !valid {
+		return AuthResult{}, app.ErrInvalidCredentials
+	}
+
+	rawToken, tokenHash, err := s.generator.Generate()
+	if err != nil {
+		return AuthResult{}, fmt.Errorf("generate session token: %w", err)
+	}
+
+	expiresAt := now.Add(sessionLifetime)
+
+	session := domain.Session{
+		TokenHash: tokenHash,
+		UserID:    user.ID,
+		CreatedAt: now,
+		ExpiresAt: expiresAt,
+	}
+
+	if err := s.repo.CreateSession(ctx, session); err != nil {
+		return AuthResult{}, fmt.Errorf("create session: %w", err)
+	}
+
+	result := AuthResult{
+		UserID:    user.ID,
+		Username:  user.Username,
+		Token:     rawToken,
+		ExpiresAt: expiresAt,
+	}
+
+	return result, nil
 }
