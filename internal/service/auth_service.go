@@ -20,6 +20,8 @@ type AuthRepository interface {
 	CreateUserWithSession(ctx context.Context, user domain.User, session domain.Session) error
 	GetUserByUsername(ctx context.Context, username string) (*domain.User, error)
 	CreateSession(ctx context.Context, session domain.Session) error
+	GetUserBySessionTokenHash(ctx context.Context, tokenHash []byte, now time.Time) (*domain.User, error)
+	DeleteSession(ctx context.Context, tokenHash []byte) error
 }
 
 type PasswordHasher interface {
@@ -191,4 +193,26 @@ func (s *AuthService) Login(ctx context.Context, username, password string, now 
 	}
 
 	return result, nil
+}
+
+func (s *AuthService) Authenticate(ctx context.Context, rawToken string, now time.Time) (*domain.User, error) {
+	if rawToken == "" {
+		return nil, app.ErrUnauthenticated
+	}
+
+	user, err := s.repo.GetUserBySessionTokenHash(ctx, s.generator.Hash(rawToken), now)
+	if err != nil {
+		return nil, fmt.Errorf("authenticate session: %w", err)
+	}
+	return user, nil
+}
+
+func (s *AuthService) Logout(ctx context.Context, rawToken string) error {
+	if rawToken == "" {
+		return nil
+	}
+	if err := s.repo.DeleteSession(ctx, s.generator.Hash(rawToken)); err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	return nil
 }

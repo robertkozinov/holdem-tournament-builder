@@ -34,6 +34,20 @@ type mockAuthRepository struct {
 		session domain.Session
 		err     error
 	}
+
+	getUserBySessionTokenHash struct {
+		called    bool
+		tokenHash []byte
+		now       time.Time
+		user      *domain.User
+		err       error
+	}
+
+	deleteSession struct {
+		called    bool
+		tokenHash []byte
+		err       error
+	}
 }
 
 func (r *mockAuthRepository) CreateUserWithSession(ctx context.Context, user domain.User, session domain.Session) error {
@@ -58,6 +72,19 @@ func (r *mockAuthRepository) CreateSession(ctx context.Context, session domain.S
 	r.createSession.called = true
 	r.createSession.session = session
 	return r.createSession.err
+}
+
+func (r *mockAuthRepository) GetUserBySessionTokenHash(ctx context.Context, tokenHash []byte, now time.Time) (*domain.User, error) {
+	r.getUserBySessionTokenHash.called = true
+	r.getUserBySessionTokenHash.tokenHash = tokenHash
+	r.getUserBySessionTokenHash.now = now
+	return r.getUserBySessionTokenHash.user, r.getUserBySessionTokenHash.err
+}
+
+func (r *mockAuthRepository) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	r.deleteSession.called = true
+	r.deleteSession.tokenHash = tokenHash
+	return r.deleteSession.err
 }
 
 type mockPasswordHasher struct {
@@ -655,5 +682,101 @@ func TestAuthService_Login(t *testing.T) {
 		assert.False(t, hasher.verifyCalled)
 		assert.False(t, generator.generatorCalled)
 		assert.False(t, repo.createSession.called)
+	})
+}
+
+func TestAuthService_Authenticate(t *testing.T) {
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+
+	t.Run("returns user for active session", func(t *testing.T) {
+		user := &domain.User{ID: uuid.New(), Username: "table_host"}
+		repo := &mockAuthRepository{}
+		repo.getUserBySessionTokenHash.user = user
+		generator := &mockSessionTokenGenerator{hashTokenHash: []byte{1, 2, 3}}
+		s := NewAuthService(repo, &mockPasswordHasher{}, generator)
+
+		got, err := s.Authenticate(context.Background(), "raw-token", now)
+
+		require.NoError(t, err)
+		assert.Same(t, user, got)
+		assert.True(t, generator.hashCalled)
+		assert.Equal(t, "raw-token", generator.hashRawToken)
+		assert.True(t, repo.getUserBySessionTokenHash.called)
+		assert.Equal(t, []byte{1, 2, 3}, repo.getUserBySessionTokenHash.tokenHash)
+		assert.Equal(t, now, repo.getUserBySessionTokenHash.now)
+	})
+
+	t.Run("rejects missing token", func(t *testing.T) {
+		repo := &mockAuthRepository{}
+		generator := &mockSessionTokenGenerator{}
+		s := NewAuthService(repo, &mockPasswordHasher{}, generator)
+
+		got, err := s.Authenticate(context.Background(), "", now)
+
+		require.ErrorIs(t, err, app.ErrUnauthenticated)
+		assert.Nil(t, got)
+		assert.False(t, generator.hashCalled)
+		assert.False(t, repo.getUserBySessionTokenHash.called)
+	})
+
+	t.Run("rejects unknown or expired session", func(t *testing.T) {
+		repo := &mockAuthRepository{}
+		repo.getUserBySessionTokenHash.err = app.ErrUnauthenticated
+		s := NewAuthService(repo, &mockPasswordHasher{}, &mockSessionTokenGenerator{})
+
+		got, err := s.Authenticate(context.Background(), "invalid-token", now)
+
+		require.ErrorIs(t, err, app.ErrUnauthenticated)
+		assert.Nil(t, got)
+	})
+
+	t.Run("preserves repository error", func(t *testing.T) {
+		repoErr := errors.New("database unavailable")
+		repo := &mockAuthRepository{}
+		repo.getUserBySessionTokenHash.err = repoErr
+		s := NewAuthService(repo, &mockPasswordHasher{}, &mockSessionTokenGenerator{})
+
+		got, err := s.Authenticate(context.Background(), "raw-token", now)
+
+		require.ErrorIs(t, err, repoErr)
+		assert.Nil(t, got)
+	})
+}
+
+func TestAuthService_Logout(t *testing.T) {
+	t.Run("deletes session by token hash", func(t *testing.T) {
+		repo := &mockAuthRepository{}
+		generator := &mockSessionTokenGenerator{hashTokenHash: []byte{4, 5, 6}}
+		s := NewAuthService(repo, &mockPasswordHasher{}, generator)
+
+		err := s.Logout(context.Background(), "raw-token")
+
+		require.NoError(t, err)
+		assert.Equal(t, "raw-token", generator.hashRawToken)
+		assert.True(t, repo.deleteSession.called)
+		assert.Equal(t, []byte{4, 5, 6}, repo.deleteSession.tokenHash)
+	})
+
+	t.Run("missing token is already logged out", func(t *testing.T) {
+		repo := &mockAuthRepository{}
+		generator := &mockSessionTokenGenerator{}
+		s := NewAuthService(repo, &mockPasswordHasher{}, generator)
+
+		err := s.Logout(context.Background(), "")
+
+		require.NoError(t, err)
+		assert.False(t, generator.hashCalled)
+		assert.False(t, repo.deleteSession.called)
+	})
+
+	t.Run("preserves repository error", func(t *testing.T) {
+		repoErr := errors.New("database unavailable")
+		repo := &mockAuthRepository{}
+		repo.deleteSession.err = repoErr
+		s := NewAuthService(repo, &mockPasswordHasher{}, &mockSessionTokenGenerator{})
+
+		err := s.Logout(context.Background(), "raw-token")
+
+		require.ErrorIs(t, err, repoErr)
 	})
 }

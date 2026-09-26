@@ -289,3 +289,65 @@ func TestAuthRepository_CreateSession(t *testing.T) {
 		assert.True(t, session.ExpiresAt.Equal(storedSession.ExpiresAt))
 	})
 }
+
+func TestAuthRepository_GetUserBySessionTokenHash(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+
+	t.Run("gets user for active session", func(t *testing.T) {
+		ctx, _, repo := setupAuthRepositoryTest(t)
+		user := domain.User{ID: uuid.New(), Username: "session_owner", PasswordHash: "password-hash", CreatedAt: now, UpdatedAt: now}
+		tokenHash := sha256.Sum256([]byte("active-token"))
+		session := domain.Session{TokenHash: tokenHash[:], UserID: user.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		require.NoError(t, repo.CreateUserWithSession(ctx, user, session))
+
+		got, err := repo.GetUserBySessionTokenHash(ctx, tokenHash[:], now.Add(30*time.Minute))
+
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, user.ID, got.ID)
+		assert.Equal(t, user.Username, got.Username)
+	})
+
+	t.Run("rejects session exactly at expiry", func(t *testing.T) {
+		ctx, _, repo := setupAuthRepositoryTest(t)
+		user := domain.User{ID: uuid.New(), Username: "session_owner", PasswordHash: "password-hash", CreatedAt: now, UpdatedAt: now}
+		tokenHash := sha256.Sum256([]byte("expired-token"))
+		session := domain.Session{TokenHash: tokenHash[:], UserID: user.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		require.NoError(t, repo.CreateUserWithSession(ctx, user, session))
+
+		got, err := repo.GetUserBySessionTokenHash(ctx, tokenHash[:], session.ExpiresAt)
+
+		require.ErrorIs(t, err, app.ErrUnauthenticated)
+		assert.Nil(t, got)
+	})
+
+	t.Run("rejects unknown token", func(t *testing.T) {
+		ctx, _, repo := setupAuthRepositoryTest(t)
+		tokenHash := sha256.Sum256([]byte("missing-token"))
+
+		got, err := repo.GetUserBySessionTokenHash(ctx, tokenHash[:], now)
+
+		require.ErrorIs(t, err, app.ErrUnauthenticated)
+		assert.Nil(t, got)
+	})
+}
+
+func TestAuthRepository_DeleteSession(t *testing.T) {
+	ctx, pool, repo := setupAuthRepositoryTest(t)
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	user := domain.User{ID: uuid.New(), Username: "session_owner", PasswordHash: "password-hash", CreatedAt: now, UpdatedAt: now}
+	tokenHash := sha256.Sum256([]byte("revoked-token"))
+	session := domain.Session{TokenHash: tokenHash[:], UserID: user.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	require.NoError(t, repo.CreateUserWithSession(ctx, user, session))
+
+	require.NoError(t, repo.DeleteSession(ctx, tokenHash[:]))
+	require.NoError(t, repo.DeleteSession(ctx, tokenHash[:]))
+
+	got, err := repo.GetUserBySessionTokenHash(ctx, tokenHash[:], now)
+	require.ErrorIs(t, err, app.ErrUnauthenticated)
+	assert.Nil(t, got)
+
+	var count int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE id = $1`, user.ID).Scan(&count))
+	assert.Equal(t, 1, count)
+}
