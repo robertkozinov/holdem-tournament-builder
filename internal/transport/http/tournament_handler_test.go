@@ -314,7 +314,7 @@ func TestTournamentHandler_GetTournamentByID(t *testing.T) {
 		srv := &mockTournamentService{
 			getTr: validTournamentWithID(t, id),
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodGet,
@@ -343,38 +343,11 @@ func TestTournamentHandler_GetTournamentByID(t *testing.T) {
 		require.NotNil(t, body.NextBlindLevel)
 		assert.Nil(t, body.LevelStartedAt)
 		assert.Nil(t, body.PausedAt)
-		assert.Empty(t, body.Transfers)
-	})
-
-	t.Run("returns transfers for finished tournament", func(t *testing.T) {
-		id := uuid.New()
-		tr := validTournamentWithID(t, id)
-		tr.Status = domain.StatusFinished
-		tr.Players = []string{"A"}
-		tr.Results = []domain.Result{
-			{Name: "B", Place: 2, Prize: 0},
-			{Name: "A", Place: 1, Prize: 2000},
-		}
-
-		srv := &mockTournamentService{getTr: tr}
-		router := newTestRouter(NewTournamentHandler(srv))
-		req := httptest.NewRequest(http.MethodGet, "/tournaments/"+id.String(), nil)
-		rec := httptest.NewRecorder()
-
-		router.ServeHTTP(rec, req)
-
-		require.Equal(t, http.StatusOK, rec.Code)
-
-		var body TournamentResponse
-		require.NoError(t, json.NewDecoder(rec.Body).Decode(&body))
-		assert.Equal(t, []TransferResponse{
-			{From: "B", To: "A", Amount: 1000},
-		}, body.Transfers)
 	})
 
 	t.Run("returns bad request when id is invalid", func(t *testing.T) {
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodGet,
@@ -394,7 +367,7 @@ func TestTournamentHandler_GetTournamentByID(t *testing.T) {
 		srv := &mockTournamentService{
 			getErr: app.ErrTournamentNotFound,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodGet,
@@ -415,7 +388,7 @@ func TestTournamentHandler_GetTournamentByID(t *testing.T) {
 		srv := &mockTournamentService{
 			getErr: errors.New("service error"),
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodGet,
@@ -435,7 +408,7 @@ func TestTournamentHandler_DeleteTournament(t *testing.T) {
 	t.Run("deletes tournament", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodDelete,
@@ -454,7 +427,7 @@ func TestTournamentHandler_DeleteTournament(t *testing.T) {
 
 	t.Run("returns bad request when id is invalid", func(t *testing.T) {
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodDelete,
@@ -474,7 +447,7 @@ func TestTournamentHandler_DeleteTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			deleteErr: app.ErrTournamentNotFound,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodDelete,
@@ -495,7 +468,7 @@ func TestTournamentHandler_DeleteTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			deleteErr: errors.New("service error"),
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodDelete,
@@ -515,7 +488,7 @@ func TestTournamentHandler_StartTournament(t *testing.T) {
 	t.Run("starts tournament", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -534,7 +507,7 @@ func TestTournamentHandler_StartTournament(t *testing.T) {
 
 	t.Run("returns bad request when id is invalid", func(t *testing.T) {
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -554,7 +527,7 @@ func TestTournamentHandler_StartTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			startErr: app.ErrTournamentNotFound,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -575,7 +548,7 @@ func TestTournamentHandler_StartTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			startErr: domain.ErrIncorrectStatus,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -596,7 +569,7 @@ func TestTournamentHandler_StartTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			startErr: errors.New("service error"),
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -617,7 +590,7 @@ func TestTournamentHandler_PauseTournament(t *testing.T) {
 	t.Run("pauses tournament", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -636,7 +609,7 @@ func TestTournamentHandler_PauseTournament(t *testing.T) {
 
 	t.Run("returns bad request when id is invalid", func(t *testing.T) {
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -656,7 +629,7 @@ func TestTournamentHandler_PauseTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			pauseErr: domain.ErrIncorrectStatus,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -677,7 +650,7 @@ func TestTournamentHandler_ResumeTournament(t *testing.T) {
 	t.Run("resumes tournament", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -696,7 +669,7 @@ func TestTournamentHandler_ResumeTournament(t *testing.T) {
 
 	t.Run("returns bad request when id is invalid", func(t *testing.T) {
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -716,7 +689,7 @@ func TestTournamentHandler_ResumeTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			resumeErr: domain.ErrIncorrectStatus,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -737,7 +710,7 @@ func TestTournamentHandler_FinishTournament(t *testing.T) {
 	t.Run("finishes tournament", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -756,7 +729,7 @@ func TestTournamentHandler_FinishTournament(t *testing.T) {
 
 	t.Run("returns bad request when id is invalid", func(t *testing.T) {
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -776,7 +749,7 @@ func TestTournamentHandler_FinishTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			finishErr: domain.ErrCantFinish,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -797,7 +770,7 @@ func TestTournamentHandler_LevelUpTournament(t *testing.T) {
 	t.Run("levels up tournament", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -816,7 +789,7 @@ func TestTournamentHandler_LevelUpTournament(t *testing.T) {
 
 	t.Run("returns bad request when id is invalid", func(t *testing.T) {
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -836,7 +809,7 @@ func TestTournamentHandler_LevelUpTournament(t *testing.T) {
 		srv := &mockTournamentService{
 			levelUpErr: domain.ErrMaxBlindLevel,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(
 			http.MethodPost,
@@ -857,7 +830,7 @@ func TestTournamentHandler_AddRebuy(t *testing.T) {
 	t.Run("adds rebuy", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/rebuy",
@@ -876,7 +849,7 @@ func TestTournamentHandler_AddRebuy(t *testing.T) {
 	t.Run("returns bad request when json is invalid", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/rebuy", strings.NewReader(`{`))
@@ -894,7 +867,7 @@ func TestTournamentHandler_AddRebuy(t *testing.T) {
 			addRebuyErr: fmt.Errorf("%w: %w",
 				app.ErrValidation, app.ErrInvalidPlayerName),
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/rebuy",
@@ -912,7 +885,7 @@ func TestTournamentHandler_AddRebuy(t *testing.T) {
 		srv := &mockTournamentService{
 			addRebuyErr: domain.ErrPlayerNotFound,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/rebuy",
@@ -931,7 +904,7 @@ func TestTournamentHandler_AddRebuy(t *testing.T) {
 		srv := &mockTournamentService{
 			addRebuyErr: domain.ErrRebuyNotAllowed,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/rebuy",
@@ -950,7 +923,7 @@ func TestTournamentHandler_KnockoutPlayer(t *testing.T) {
 	t.Run("knocks out player", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/knockout",
@@ -969,7 +942,7 @@ func TestTournamentHandler_KnockoutPlayer(t *testing.T) {
 	t.Run("returns bad request when json is invalid", func(t *testing.T) {
 		id := uuid.New()
 		srv := &mockTournamentService{}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/knockout", strings.NewReader(`{`))
@@ -986,7 +959,7 @@ func TestTournamentHandler_KnockoutPlayer(t *testing.T) {
 		srv := &mockTournamentService{
 			knockoutErr: domain.ErrPlayerNotFound,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/knockout",
@@ -1005,7 +978,7 @@ func TestTournamentHandler_KnockoutPlayer(t *testing.T) {
 		srv := &mockTournamentService{
 			knockoutErr: domain.ErrCantKnockout,
 		}
-		router := newTestRouter(NewTournamentHandler(srv))
+		router := NewRouter(NewTournamentHandler(srv))
 
 		req := httptest.NewRequest(http.MethodPost,
 			"/tournaments/"+id.String()+"/knockout",

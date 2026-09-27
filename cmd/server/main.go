@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"holdem-tournament-builder/internal/security"
 	"holdem-tournament-builder/internal/service"
 	"holdem-tournament-builder/internal/storage/postgres"
 	transporthttp "holdem-tournament-builder/internal/transport/http"
@@ -12,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 )
@@ -40,18 +38,8 @@ func run() error {
 	tournamentService := service.NewTournamentService(repo)
 
 	tournamentHandler := transporthttp.NewTournamentHandler(tournamentService)
-	authRepo := postgres.NewAuthRepository(pool)
-	authService := service.NewAuthService(authRepo, &security.PasswordHasher{}, &security.SessionTokenGenerator{})
-	secureCookie := true
-	if raw, ok := os.LookupEnv("COOKIE_SECURE"); ok {
-		secureCookie, err = strconv.ParseBool(raw)
-		if err != nil {
-			return fmt.Errorf("parse COOKIE_SECURE: %w", err)
-		}
-	}
-	authHandler := transporthttp.NewAuthHandler(authService, secureCookie)
 
-	router := transporthttp.NewRouter(tournamentHandler, authHandler)
+	router := transporthttp.NewRouter(tournamentHandler)
 
 	server := transporthttp.NewServer(router)
 

@@ -11,27 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestRouter(handler *TournamentHandler) http.Handler {
-	return NewRouter(handler, NewAuthHandler(&mockAuthService{}, false))
-}
-
 func TestNewRouter(t *testing.T) {
-	t.Run("serves frontend", func(t *testing.T) {
-		handler := NewTournamentHandler(&mockTournamentService{})
-		router := newTestRouter(handler)
-
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		rec := httptest.NewRecorder()
-
-		router.ServeHTTP(rec, req)
-
-		require.Equal(t, http.StatusOK, rec.Code)
-		assert.Contains(t, rec.Body.String(), "Holdem Tournament Builder")
-	})
-
 	t.Run("registers health route", func(t *testing.T) {
 		handler := NewTournamentHandler(&mockTournamentService{})
-		router := newTestRouter(handler)
+		router := NewRouter(handler)
 
 		req := httptest.NewRequest(http.MethodGet, "/health", nil)
 		rec := httptest.NewRecorder()
@@ -46,7 +29,7 @@ func TestNewRouter(t *testing.T) {
 		id := uuid.MustParse("00000000-0000-0000-0000-000000000010")
 		service := &mockTournamentService{createID: id}
 		handler := NewTournamentHandler(service)
-		router := newTestRouter(handler)
+		router := NewRouter(handler)
 
 		req := httptest.NewRequest(http.MethodPost, "/tournaments", strings.NewReader(validCreateTournamentJSON()))
 		rec := httptest.NewRecorder()
