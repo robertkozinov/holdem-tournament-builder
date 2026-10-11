@@ -3,109 +3,105 @@ package service
 import (
 	"context"
 	"fmt"
-	"holdem-tournament-builder/internal/app"
-	"holdem-tournament-builder/internal/domain"
+	"slices"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
+	"holdem-tournament-builder/internal/app"
+	"holdem-tournament-builder/internal/domain"
 )
 
 type TournamentRepository interface {
 	Create(ctx context.Context, tournament *domain.Tournament) (uuid.UUID, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error)
 	Update(ctx context.Context, tournament *domain.Tournament) error
+	UpdateLocked(ctx context.Context, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error)
 	Delete(ctx context.Context, id uuid.UUID) error
+	List(ctx context.Context, limit, offset int) ([]*domain.Tournament, error)
 }
 
-type TournamentService struct {
-	repo TournamentRepository
-}
+type TournamentService struct{ repo TournamentRepository }
 
 func NewTournamentService(repo TournamentRepository) *TournamentService {
 	return &TournamentService{repo: repo}
 }
 
 func (s *TournamentService) CreateTournament(ctx context.Context, input CreateTournamentInput) (uuid.UUID, error) {
-	stack, err := domain.GenerateStackPlan(len(input.Players), input.Chips, input.Style)
+	editable := SaveTournamentInput{Name: input.Name, Date: input.Date, Players: input.Players, SettlementMode: input.SettlementMode, ChipSet: input.ChipSet, Style: input.Style, Duration: input.Duration, LevelDuration: input.LevelDuration}
+	tr, err := buildTournament(editable, input.BuyInAmount, true)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: generate stack plan: %w", app.ErrValidation, err)
+		return uuid.Nil, err
 	}
-
-	blinds, err := domain.GenerateBlinds(stack, input.Style, input.Duration, input.LevelDuration)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: generate blinds: %w", app.ErrValidation, err)
-	}
-
-	var payouts []domain.PayoutSpot
-
-	switch input.PayoutMode {
-	case PayoutModeCustom:
-		payouts, err = domain.CustomPayouts(input.PayoutFixedBuyIns, len(input.Players))
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("%w: build custom payouts: %w", app.ErrValidation, err)
-		}
-	case PayoutModeDefault:
-		payouts, err = domain.DefaultPayouts(len(input.Players))
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("%w: build default payouts: %w", app.ErrValidation, err)
-		}
-	default:
-		return uuid.Nil, fmt.Errorf("%w: %w", app.ErrValidation, app.ErrInvalidPayoutMode)
-	}
-
-	tr, err := domain.NewTournament(input.Name,
-		input.Date,
-		input.Players,
-		input.BuyInAmount,
-		input.Chips,
-		domain.RebuyRules{
-			Allowed:  input.RebuyAllowed,
-			MaxLevel: input.RebuyMaxLevel,
-		},
-		input.Duration,
-		stack,
-		blinds,
-		payouts,
-	)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("%w: build tournament: %w", app.ErrValidation, err)
-	}
-
 	id, err := s.repo.Create(ctx, tr)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create tournament: %w", err)
 	}
-
 	return id, nil
 }
 
-func (s *TournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID, now time.Time) (*domain.Tournament, error) {
+func (s *TournamentService) SaveTournament(ctx context.Context, id uuid.UUID, input SaveTournamentInput) (*domain.Tournament, error) {
+	original, err := s.GetTournamentByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	// A separate candidate leaves the loaded card intact on validation or storage failure.
+	candidate, err := buildTournament(input, original.BuyInAmount, false)
+	if err != nil {
+		return nil, err
+	}
+	candidate.ID = id
+	if err := s.repo.Update(ctx, candidate); err != nil {
+		return nil, fmt.Errorf("save tournament: %w", err)
+	}
+	return candidate, nil
+}
+
+func buildTournament(input SaveTournamentInput, buyIn int64, generateIDs bool) (*domain.Tournament, error) {
+	players := slices.Clone(input.Players)
+	for i := range players {
+		players[i].Name = strings.TrimSpace(players[i].Name)
+		if generateIDs && players[i].ID == uuid.Nil {
+			players[i].ID = uuid.New()
+		}
+		players[i].Rebuys = slices.Clone(players[i].Rebuys)
+		for j := range players[i].Rebuys {
+			if generateIDs && players[i].Rebuys[j].ID == uuid.Nil {
+				players[i].Rebuys[j].ID = uuid.New()
+			}
+		}
+	}
+	tr, err := domain.NewTournament(domain.Tournament{
+		Name: strings.TrimSpace(input.Name), Date: input.Date, Players: players, BuyInAmount: buyIn,
+		SettlementMode: input.SettlementMode, ChipSet: input.ChipSet, Style: input.Style,
+		Duration: input.Duration, LevelDuration: input.LevelDuration, Results: input.Results,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: build tournament: %w", app.ErrValidation, err)
+	}
+	if tr.Duration/tr.LevelDuration > 1000 {
+		return nil, fmt.Errorf("%w: %w", app.ErrValidation, domain.ErrTooManyBlindLevels)
+	}
+	stack, err := domain.GenerateStackPlan(len(tr.Players), tr.ChipSet, tr.Style)
+	if err != nil {
+		return nil, fmt.Errorf("%w: generate stack plan: %w", app.ErrValidation, err)
+	}
+	blinds, err := domain.GenerateBlinds(stack, tr.Style, tr.Duration, tr.LevelDuration)
+	if err != nil {
+		return nil, fmt.Errorf("%w: generate blinds: %w", app.ErrValidation, err)
+	}
+	tr.StartingStack = stack
+	tr.BlindStructure = blinds
+	return tr, nil
+}
+
+func (s *TournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
 	if id == uuid.Nil {
 		return nil, app.ErrInvalidTournamentID
 	}
-
 	tr, err := s.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get tournament: %w", err)
 	}
-
-	if tr.Status != domain.StatusRunning {
-		return tr, nil
-	}
-
-	currentLvl := tr.CurrentLevel
-
-	if err := tr.AdvanceLevelIfNeeded(now); err != nil {
-		return nil, fmt.Errorf("advance blind level: %w", err)
-	}
-
-	if tr.CurrentLevel != currentLvl {
-		if err := s.repo.Update(ctx, tr); err != nil {
-			return nil, fmt.Errorf("update tournament: %w", err)
-		}
-	}
-
 	return tr, nil
 }
 
@@ -113,150 +109,19 @@ func (s *TournamentService) DeleteTournament(ctx context.Context, id uuid.UUID) 
 	if id == uuid.Nil {
 		return app.ErrInvalidTournamentID
 	}
-
-	err := s.repo.Delete(ctx, id)
-	if err != nil {
+	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete tournament: %w", err)
 	}
 	return nil
 }
 
-func (s *TournamentService) StartTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	tr, err := s.GetTournamentByID(ctx, id, now)
+func (s *TournamentService) ListTournaments(ctx context.Context, limit, offset int) ([]*domain.Tournament, error) {
+	if limit < 1 || limit > 100 || offset < 0 {
+		return nil, fmt.Errorf("%w: limit must be 1..100 and offset non-negative", app.ErrValidation)
+	}
+	tournaments, err := s.repo.List(ctx, limit, offset)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("list tournaments: %w", err)
 	}
-
-	if err := tr.Start(now); err != nil {
-		return err
-	}
-
-	if err := s.repo.Update(ctx, tr); err != nil {
-		return fmt.Errorf("update tournament: %w", err)
-	}
-
-	return nil
-}
-
-func (s *TournamentService) PauseTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	tr, err := s.GetTournamentByID(ctx, id, now)
-	if err != nil {
-		return err
-	}
-
-	if err := tr.Pause(now); err != nil {
-		return err
-	}
-
-	if err := s.repo.Update(ctx, tr); err != nil {
-		return fmt.Errorf("update tournament: %w", err)
-	}
-
-	return nil
-}
-
-func (s *TournamentService) ResumeTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	tr, err := s.GetTournamentByID(ctx, id, now)
-	if err != nil {
-		return err
-	}
-
-	if err := tr.Resume(now); err != nil {
-		return err
-	}
-
-	if err := s.repo.Update(ctx, tr); err != nil {
-		return fmt.Errorf("update tournament: %w", err)
-	}
-
-	return nil
-}
-
-func (s *TournamentService) FinishTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	tr, err := s.GetTournamentByID(ctx, id, now)
-	if err != nil {
-		return err
-	}
-
-	if err := tr.Finish(); err != nil {
-		return err
-	}
-
-	if err := s.repo.Update(ctx, tr); err != nil {
-		return fmt.Errorf("update tournament: %w", err)
-	}
-
-	return nil
-}
-
-func (s *TournamentService) LevelUpTournament(ctx context.Context, id uuid.UUID, now time.Time) error {
-	if id == uuid.Nil {
-		return app.ErrInvalidTournamentID
-	}
-	tr, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("get tournament: %w", err)
-	}
-
-	currentLvl := tr.CurrentLevel
-
-	if err := tr.AdvanceLevelIfNeeded(now); err != nil {
-		return fmt.Errorf("advance blind level: %w", err)
-	}
-
-	if currentLvl == tr.CurrentLevel {
-		if err := tr.LevelUp(now); err != nil {
-			return err
-		}
-	}
-
-	if err := s.repo.Update(ctx, tr); err != nil {
-		return fmt.Errorf("update tournament: %w", err)
-	}
-
-	return nil
-}
-
-func (s *TournamentService) AddRebuy(ctx context.Context, id uuid.UUID, playerName string, now time.Time) error {
-	playerName = strings.TrimSpace(playerName)
-	if playerName == "" {
-		return fmt.Errorf("%w: %w", app.ErrValidation, app.ErrInvalidPlayerName)
-	}
-
-	tr, err := s.GetTournamentByID(ctx, id, now)
-	if err != nil {
-		return err
-	}
-
-	if err := tr.AddRebuy(playerName); err != nil {
-		return err
-	}
-
-	if err := s.repo.Update(ctx, tr); err != nil {
-		return fmt.Errorf("update tournament: %w", err)
-	}
-
-	return nil
-}
-
-func (s *TournamentService) KnockoutPlayer(ctx context.Context, id uuid.UUID, playerName string, now time.Time) error {
-	playerName = strings.TrimSpace(playerName)
-	if playerName == "" {
-		return fmt.Errorf("%w: %w", app.ErrValidation, app.ErrInvalidPlayerName)
-	}
-
-	tr, err := s.GetTournamentByID(ctx, id, now)
-	if err != nil {
-		return err
-	}
-
-	if err := tr.Knockout(playerName); err != nil {
-		return err
-	}
-
-	if err := s.repo.Update(ctx, tr); err != nil {
-		return fmt.Errorf("update tournament: %w", err)
-	}
-
-	return nil
+	return tournaments, nil
 }

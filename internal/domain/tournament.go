@@ -1,124 +1,133 @@
 package domain
 
 import (
+	"math"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
+type SettlementMode string
+
+const (
+	SettlementBank SettlementMode = "bank"
+	SettlementP2P  SettlementMode = "p2p"
+)
+
+type Rebuy struct {
+	ID   uuid.UUID
+	Paid bool
+}
+
+type TournamentPlayer struct {
+	ID        uuid.UUID
+	Name      string
+	BuyInPaid bool
+	Rebuys    []Rebuy
+}
+
 type Tournament struct {
-	ID uuid.UUID
-
-	//custom
-	Name        string
-	Date        time.Time
-	Players     []string
-	BuyInAmount int64
-	ChipSet     []ChipDenomination
-	RebuyRules  RebuyRules
-	Duration    time.Duration
-
-	//calculating
+	ID             uuid.UUID
+	Name           string
+	Date           time.Time
+	Players        []TournamentPlayer
+	BuyInAmount    int64
+	SettlementMode SettlementMode
+	ChipSet        []ChipDenomination
+	Style          TournamentStyle
+	Duration       time.Duration
+	LevelDuration  time.Duration
 	StartingStack  StackPlan
 	BlindStructure []BlindLevel
-	PayoutSpots    []PayoutSpot
-
-	//runtime
-	Contributions  map[string]int64
-	CurrentLevel   int
-	LevelStartedAt time.Time
-	PausedAt       time.Time
-	Status         Status
 	Results        []Result
 }
 
-type Status int
-
-const (
-	StatusCreated Status = iota
-	StatusRunning
-	StatusPaused
-	StatusFinished
-)
-
-type RebuyRules struct {
-	Allowed  bool
-	MaxLevel int
-}
-
 func (t *Tournament) Pot() int64 {
-	var pot int64
-	for _, amount := range t.Contributions {
-		pot += amount
+	var entries int64
+	for _, player := range t.Players {
+		entries += 1 + int64(len(player.Rebuys))
 	}
-	return pot
+	return entries * t.BuyInAmount
 }
 
-func initContributions(players []string, buyIn int64) map[string]int64 {
-	c := make(map[string]int64, len(players))
-	for _, p := range players {
-		c[p] = buyIn
-	}
-	return c
-}
+func (t *Tournament) HasResults() bool { return len(t.Results) > 0 }
 
-func hasDuplicates(players []string) bool {
-	seen := make(map[string]bool, len(players))
-	for _, p := range players {
-		if seen[p] {
-			return true
-		}
-		seen[p] = true
-	}
-	return false
-}
-
-func NewTournament(name string,
-	date time.Time,
-	players []string,
-	buyInAmount int64,
-	chips []ChipDenomination,
-	rebuyRules RebuyRules,
-	duration time.Duration,
-	stack StackPlan,
-	blinds []BlindLevel,
-	payouts []PayoutSpot,
-
-) (*Tournament, error) {
-	if name == "" {
+// NewTournament validates and copies a complete saved card.
+func NewTournament(input Tournament) (*Tournament, error) {
+	if strings.TrimSpace(input.Name) == "" {
 		return nil, ErrEmptyName
 	}
-	if len(players) < 2 {
+	if len(input.Players) < 2 {
 		return nil, ErrNotEnoughPlayers
 	}
-	if hasDuplicates(players) {
-		return nil, ErrDuplicatePlayer
-	}
-	if buyInAmount < 0 {
+	if input.BuyInAmount < 0 {
 		return nil, ErrIncorrectBuyInAmount
 	}
-	if err := validateChipSet(chips); err != nil {
+	if err := validateChipSet(input.ChipSet); err != nil {
 		return nil, err
 	}
-	if duration <= 0 {
+	if input.Duration <= 0 || input.LevelDuration <= 0 {
 		return nil, ErrIncorrectDuration
 	}
-	if rebuyRules.MaxLevel < 0 {
-		return nil, ErrIncorrectRebuyRules
+	if input.Style < StyleStandard || input.Style > StyleDeep {
+		return nil, ErrInvalidStyle
 	}
-
-	return &Tournament{
-		Name:           name,
-		Date:           date,
-		Players:        players,
-		BuyInAmount:    buyInAmount,
-		ChipSet:        chips,
-		RebuyRules:     rebuyRules,
-		Duration:       duration,
-		StartingStack:  stack,
-		BlindStructure: blinds,
-		Contributions:  initContributions(players, buyInAmount),
-		PayoutSpots:    payouts,
-		Status:         StatusCreated,
-	}, nil
+	if input.SettlementMode != SettlementBank && input.SettlementMode != SettlementP2P {
+		return nil, ErrInvalidSettlementMode
+	}
+	names := make(map[string]bool, len(input.Players))
+	ids := make(map[uuid.UUID]bool, len(input.Players))
+	rebuys := make(map[uuid.UUID]bool)
+	var entries int64
+	for _, player := range input.Players {
+		name := strings.TrimSpace(player.Name)
+		if name == "" {
+			return nil, ErrInvalidPlayerName
+		}
+		if player.ID == uuid.Nil {
+			return nil, ErrInvalidPlayerID
+		}
+		if names[name] || ids[player.ID] {
+			return nil, ErrDuplicatePlayer
+		}
+		names[name] = true
+		ids[player.ID] = true
+		if int64(len(player.Rebuys)) >= math.MaxInt64-entries {
+			return nil, ErrPotOverflow
+		}
+		entries += 1 + int64(len(player.Rebuys))
+		for _, rebuy := range player.Rebuys {
+			if rebuy.ID == uuid.Nil {
+				return nil, ErrInvalidRebuyID
+			}
+			if rebuys[rebuy.ID] {
+				return nil, ErrDuplicateRebuy
+			}
+			rebuys[rebuy.ID] = true
+		}
+	}
+	if input.BuyInAmount > math.MaxInt64/entries {
+		return nil, ErrPotOverflow
+	}
+	if err := input.validateResults(ids); err != nil {
+		return nil, err
+	}
+	output := input
+	output.Players = slices.Clone(input.Players)
+	for i := range output.Players {
+		output.Players[i].Rebuys = slices.Clone(input.Players[i].Rebuys)
+	}
+	output.ChipSet = slices.Clone(input.ChipSet)
+	output.StartingStack.Distribution = slices.Clone(input.StartingStack.Distribution)
+	output.BlindStructure = slices.Clone(input.BlindStructure)
+	output.Results = slices.Clone(input.Results)
+	for i, result := range input.Results {
+		if result.Place != nil {
+			place := *result.Place
+			output.Results[i].Place = &place
+		}
+	}
+	return &output, nil
 }

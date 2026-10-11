@@ -39,4 +39,20 @@ func TestNewRouter(t *testing.T) {
 		require.Equal(t, http.StatusCreated, rec.Code)
 		assert.True(t, service.createCalled)
 	})
+
+	t.Run("does not register removed runtime routes", func(t *testing.T) {
+		router := NewRouter(NewTournamentHandler(&mockTournamentService{}))
+		id := uuid.New().String()
+
+		for _, path := range []string{"start", "pause", "resume", "level-up", "knockout", "finish", "rebuy", "preview"} {
+			t.Run(path, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, "/tournaments/"+id+"/"+path, nil)
+				rec := httptest.NewRecorder()
+
+				router.ServeHTTP(rec, req)
+
+				assert.Equal(t, http.StatusNotFound, rec.Code)
+			})
+		}
+	})
 }

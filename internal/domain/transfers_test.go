@@ -3,7 +3,9 @@ package domain
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMinimizeTransfers(t *testing.T) {
@@ -62,26 +64,36 @@ func TestMinimizeTransfers(t *testing.T) {
 }
 
 func TestCalculateTransfers(t *testing.T) {
-	tr := &Tournament{
-		Contributions: map[string]int64{
-			"A": 1000,
-			"B": 2000,
-			"C": 1000,
-			"D": 1000,
-		},
-		Results: []Result{
-			{Name: "A", Place: 1, Prize: 4000},
-			{Name: "B", Place: 2, Prize: 1000},
-			{Name: "C", Place: 3, Prize: 0},
-			{Name: "D", Place: 4, Prize: 0},
-		},
-	}
-
-	got := tr.CalculateTransfers()
-
-	assert.Equal(t, []Transfer{
-		{From: "B", To: "A", Amount: 1000},
-		{From: "C", To: "A", Amount: 1000},
-		{From: "D", To: "A", Amount: 1000},
-	}, got)
+	input := tournamentFixture()
+	input.Players[1].Rebuys = []Rebuy{{ID: uuid.New()}}
+	p1, p2 := 1, 2
+	input.Results = []Result{{PlayerID: input.Players[0].ID, Place: &p1, Prize: 4000}, {PlayerID: input.Players[1].ID, Place: &p2, Prize: 1000}}
+	tr, err := NewTournament(input)
+	require.NoError(t, err)
+	assert.Equal(t, []Transfer{{From: "B", To: "A", Amount: 1000}, {From: "C", To: "A", Amount: 1000}, {From: "D", To: "A", Amount: 1000}}, tr.CalculateTransfers())
+	t.Run("bank has no transfers", func(t *testing.T) {
+		tr, err := NewTournament(input)
+		require.NoError(t, err)
+		tr.SettlementMode = SettlementBank
+		assert.Empty(t, tr.CalculateTransfers())
+	})
+	t.Run("draft has no transfers", func(t *testing.T) {
+		tr, err := NewTournament(input)
+		require.NoError(t, err)
+		tr.Results = nil
+		assert.Empty(t, tr.CalculateTransfers())
+	})
+	t.Run("manual split settles entire balance", func(t *testing.T) {
+		tr, err := NewTournament(input)
+		require.NoError(t, err)
+		tr.Results = []Result{{PlayerID: tr.Players[0].ID, Prize: 2300}, {PlayerID: tr.Players[1].ID, Prize: 1700}, {PlayerID: tr.Players[2].ID, Prize: 1000}}
+		remaining := tr.balances()
+		for _, transfer := range tr.CalculateTransfers() {
+			remaining[transfer.From] += transfer.Amount
+			remaining[transfer.To] -= transfer.Amount
+		}
+		for _, amount := range remaining {
+			assert.Zero(t, amount)
+		}
+	})
 }

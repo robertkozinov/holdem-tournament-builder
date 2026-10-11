@@ -1,45 +1,50 @@
 package domain
 
-import (
-	"slices"
-)
+import "github.com/google/uuid"
 
 type Result struct {
-	Name  string
-	Place int
+	PlayerID uuid.UUID
+	// A nil place records a manual split without assigning a ranking.
+	Place *int
 	Prize int64
 }
 
-func (t *Tournament) Knockout(playerName string) error {
-	if t.Status != StatusRunning {
-		return ErrIncorrectStatus
+func (t *Tournament) validateResults(players map[uuid.UUID]bool) error {
+	if !t.HasResults() {
+		return nil
 	}
-	i := slices.Index(t.Players, playerName)
-	if i < 0 {
-		return ErrPlayerNotFound
-	}
-	if len(t.Players) <= 1 {
-		return ErrCantKnockout
-	}
-
-	place := len(t.Players)
-	var prize int64
-
-	payouts := t.CalculatePayouts()
-	for _, v := range payouts {
-		if v.Place == place {
-			prize = v.Value
+	seenPlayers := make(map[uuid.UUID]bool, len(t.Results))
+	seenPlaces := make(map[int]bool)
+	var sum int64
+	pot := t.Pot()
+	for _, result := range t.Results {
+		if !players[result.PlayerID] {
+			return ErrPlayerNotFound
 		}
+		if seenPlayers[result.PlayerID] {
+			return ErrDuplicateResult
+		}
+		seenPlayers[result.PlayerID] = true
+		if result.Place != nil {
+			place := *result.Place
+			if place < 1 || place > len(t.Players) {
+				return ErrInvalidResultPlace
+			}
+			if seenPlaces[place] {
+				return ErrDuplicatePayoutPlace
+			}
+			seenPlaces[place] = true
+		}
+		if result.Prize <= 0 {
+			return ErrInvalidPrize
+		}
+		if result.Prize > pot-sum {
+			return ErrPrizeSumMismatch
+		}
+		sum += result.Prize
 	}
-
-	t.Results = append(t.Results, Result{
-		Name:  playerName,
-		Place: place,
-		Prize: prize,
-	})
-
-	t.Players = slices.Delete(t.Players, i, i+1)
-
+	if sum != pot {
+		return ErrPrizeSumMismatch
+	}
 	return nil
-
 }

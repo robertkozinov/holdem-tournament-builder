@@ -20,12 +20,16 @@ type PayoutResult struct {
 	Value int64
 }
 
-func (t *Tournament) CalculatePayouts() []PayoutResult {
+func (t *Tournament) CalculatePayouts() ([]PayoutResult, error) {
+	spots, err := DefaultPayouts(len(t.Players))
+	if err != nil {
+		return nil, err
+	}
 	var res []PayoutResult
 
 	buyInsCounter := 0
 
-	for _, v := range t.PayoutSpots {
+	for _, v := range spots {
 		if v.Kind == PayoutFixed {
 			res = append(res, PayoutResult{
 				Place: v.Place,
@@ -35,7 +39,7 @@ func (t *Tournament) CalculatePayouts() []PayoutResult {
 		}
 	}
 
-	for _, v := range t.PayoutSpots {
+	for _, v := range spots {
 		if v.Kind == PayoutRemainder {
 			res = append(res, PayoutResult{Place: v.Place, Value: t.Pot() - int64(buyInsCounter)*t.BuyInAmount})
 		}
@@ -45,7 +49,7 @@ func (t *Tournament) CalculatePayouts() []PayoutResult {
 		return res[i].Place < res[j].Place
 	})
 
-	return res
+	return res, nil
 }
 
 func buildPayouts(fixedBuyIns []int) []PayoutSpot {
@@ -105,14 +109,6 @@ func validatePayouts(spots []PayoutSpot, players int) error {
 	}
 
 	return nil
-}
-
-func CustomPayouts(fixedBuyIns []int, players int) ([]PayoutSpot, error) {
-	spots := buildPayouts(fixedBuyIns)
-	if err := validatePayouts(spots, players); err != nil {
-		return nil, err
-	}
-	return spots, nil
 }
 
 func DefaultPayouts(players int) ([]PayoutSpot, error) {

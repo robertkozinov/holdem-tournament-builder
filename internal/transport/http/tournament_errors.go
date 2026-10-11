@@ -21,12 +21,6 @@ func handleServiceError(w http.ResponseWriter, err error) {
 		response.WriteError(w, http.StatusNotFound, "tournament not found")
 	case errors.Is(err, domain.ErrPlayerNotFound):
 		response.WriteError(w, http.StatusNotFound, "player not found")
-	case errors.Is(err, domain.ErrIncorrectStatus),
-		errors.Is(err, domain.ErrCantFinish),
-		errors.Is(err, domain.ErrMaxBlindLevel),
-		errors.Is(err, domain.ErrRebuyNotAllowed),
-		errors.Is(err, domain.ErrCantKnockout):
-		response.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		response.WriteError(w, http.StatusInternalServerError, "internal server error")
 	}
@@ -36,6 +30,14 @@ func parseTournamentID(r *http.Request) (uuid.UUID, error) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		return uuid.Nil, app.ErrInvalidTournamentID
+	}
+	return id, nil
+}
+
+func parseTournamentPlayerID(r *http.Request) (uuid.UUID, error) {
+	id, err := uuid.Parse(chi.URLParam(r, "player_id"))
+	if err != nil || id == uuid.Nil {
+		return uuid.Nil, errors.Join(app.ErrValidation, domain.ErrInvalidPlayerID)
 	}
 	return id, nil
 }

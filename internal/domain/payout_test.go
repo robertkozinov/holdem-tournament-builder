@@ -1,82 +1,40 @@
 package domain
 
 import (
-	"testing"
-
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"testing"
 )
 
 func TestCalculatePayouts(t *testing.T) {
 	tests := []struct {
-		name          string
-		buyIn         int64
-		spots         []PayoutSpot
-		contributions map[string]int64
-		want          []PayoutResult
+		name            string
+		players, rebuys int
+		want            []PayoutResult
 	}{
-		{
-			name:          "winner takes all",
-			buyIn:         1000,
-			spots:         []PayoutSpot{{Place: 1, Kind: PayoutRemainder}},
-			contributions: map[string]int64{"A": 1000, "B": 1000, "C": 1000, "D": 1000},
-			want:          []PayoutResult{{Place: 1, Value: 4000}},
-		},
-		{
-			name:  "fixed places and remainder",
-			buyIn: 1000,
-			spots: []PayoutSpot{
-				{Place: 1, Kind: PayoutRemainder},
-				{Place: 2, Kind: PayoutFixed, BuyInsValue: 2},
-				{Place: 3, Kind: PayoutFixed, BuyInsValue: 1},
-			},
-			contributions: map[string]int64{"A": 1000, "B": 1000, "C": 1000, "D": 1000, "E": 1000},
-			want: []PayoutResult{
-				{Place: 1, Value: 2000},
-				{Place: 2, Value: 2000},
-				{Place: 3, Value: 1000},
-			},
-		},
-		{
-			name:  "rebuys increase remainder",
-			buyIn: 1000,
-			spots: []PayoutSpot{
-				{Place: 1, Kind: PayoutRemainder},
-				{Place: 2, Kind: PayoutFixed, BuyInsValue: 1},
-			},
-			contributions: map[string]int64{"A": 1000, "B": 1000, "C": 3000, "D": 1000},
-			want: []PayoutResult{
-				{Place: 1, Value: 5000},
-				{Place: 2, Value: 1000},
-			},
-		},
-		{
-			name:  "remainder not first",
-			buyIn: 1000,
-			spots: []PayoutSpot{
-				{Place: 1, Kind: PayoutFixed, BuyInsValue: 1},
-				{Place: 2, Kind: PayoutRemainder},
-			},
-			contributions: map[string]int64{"A": 1000, "B": 1000, "C": 1000, "D": 1000},
-			want: []PayoutResult{
-				{Place: 1, Value: 1000},
-				{Place: 2, Value: 3000},
-			},
-		},
+		{"winner takes all", 4, 0, []PayoutResult{{Place: 1, Value: 4000}}},
+		{"two places", 5, 0, []PayoutResult{{Place: 1, Value: 4000}, {Place: 2, Value: 1000}}},
+		{"three places", 8, 0, []PayoutResult{{Place: 1, Value: 5000}, {Place: 2, Value: 2000}, {Place: 3, Value: 1000}}},
+		{"rebuys increase remainder", 5, 2, []PayoutResult{{Place: 1, Value: 6000}, {Place: 2, Value: 1000}}},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tr := &Tournament{
-				BuyInAmount:   tt.buyIn,
-				PayoutSpots:   tt.spots,
-				Contributions: tt.contributions,
+			tr := Tournament{BuyInAmount: 1000}
+			for range tt.players {
+				tr.Players = append(tr.Players, TournamentPlayer{ID: uuid.New()})
 			}
-			got := tr.CalculatePayouts()
+			for range tt.rebuys {
+				tr.Players[0].Rebuys = append(tr.Players[0].Rebuys, Rebuy{ID: uuid.New()})
+			}
+			got, err := tr.CalculatePayouts()
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+			assert.Empty(t, tr.Results)
 		})
 	}
+	t.Run("invalid number of players", func(t *testing.T) { _, err := (&Tournament{}).CalculatePayouts(); require.Error(t, err) })
 }
-
 func TestDefaultPayouts(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -110,46 +68,6 @@ func TestDefaultPayouts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := DefaultPayouts(tt.players)
-			assert.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestCustomPayouts(t *testing.T) {
-	tests := []struct {
-		name        string
-		fixedBuyIns []int
-		players     int
-		want        []PayoutSpot
-		wantErr     error
-	}{
-		{
-			name:        "top 3",
-			fixedBuyIns: []int{1, 1},
-			players:     4,
-			want: []PayoutSpot{
-				{Place: 1, Kind: PayoutRemainder},
-				{Place: 2, Kind: PayoutFixed, BuyInsValue: 1},
-				{Place: 3, Kind: PayoutFixed, BuyInsValue: 1},
-			},
-			wantErr: nil,
-		},
-		{
-			name:        "invalid fixed buy-in",
-			fixedBuyIns: []int{0},
-			players:     4,
-			wantErr:     ErrInvalidBuyInsValue,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := CustomPayouts(tt.fixedBuyIns, tt.players)
-			if tt.wantErr != nil {
-				assert.ErrorIs(t, err, tt.wantErr)
-				return
-			}
 			assert.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})

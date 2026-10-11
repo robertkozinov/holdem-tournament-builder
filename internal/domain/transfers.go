@@ -15,11 +15,13 @@ type balance struct {
 
 func (t *Tournament) balances() map[string]int64 {
 	b := make(map[string]int64)
-	for player, paid := range t.Contributions {
-		b[player] = -paid
-	}
-	for _, r := range t.Results {
-		b[r.Name] += r.Prize
+	for _, player := range t.Players {
+		b[player.Name] = -(1 + int64(len(player.Rebuys))) * t.BuyInAmount
+		for _, result := range t.Results {
+			if result.PlayerID == player.ID {
+				b[player.Name] += result.Prize
+			}
+		}
 	}
 	return b
 }
@@ -65,5 +67,8 @@ func minimizeTransfers(balances map[string]int64) []Transfer {
 }
 
 func (t *Tournament) CalculateTransfers() []Transfer {
+	if t.SettlementMode != SettlementP2P || !t.HasResults() {
+		return nil
+	}
 	return minimizeTransfers(t.balances())
 }

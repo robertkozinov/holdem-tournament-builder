@@ -10,41 +10,29 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type tournamentDB interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+}
+
 type TournamentRepository struct {
-	pool *pgxpool.Pool
+	pool tournamentDB
 }
 
 func NewTournamentRepository(pool *pgxpool.Pool) *TournamentRepository {
 	return &TournamentRepository{pool: pool}
 }
 
-func statusToString(status domain.Status) (string, error) {
-	switch status {
-	case domain.StatusCreated:
-		return "created", nil
-	case domain.StatusRunning:
-		return "running", nil
-	case domain.StatusPaused:
-		return "paused", nil
-	case domain.StatusFinished:
-		return "finished", nil
-	default:
-		return "", errUnknownTournamentStatus
-	}
-}
-
 func (r *TournamentRepository) Create(ctx context.Context, tournament *domain.Tournament) (uuid.UUID, error) {
 	if tournament == nil {
 		return uuid.Nil, errNilTournament
 	}
-	status, err := statusToString(tournament.Status)
-	if err != nil {
-		return uuid.Nil, err
-	}
-
 	if tournament.ID == uuid.Nil {
 		tournament.ID = uuid.New()
 	}
@@ -55,11 +43,11 @@ func (r *TournamentRepository) Create(ctx context.Context, tournament *domain.To
 	}
 
 	createQuery := `
-	INSERT INTO tournaments (id, name, tournament_date, status, data)
-	VALUES ($1, $2, $3, $4, $5)
+	INSERT INTO tournaments (id, name, tournament_date, data)
+	VALUES ($1, $2, $3, $4)
 	`
 
-	_, err = r.pool.Exec(ctx, createQuery, tournament.ID, tournament.Name, tournament.Date, status, data)
+	_, err = r.pool.Exec(ctx, createQuery, tournament.ID, tournament.Name, tournament.Date, data)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("insert tournament: %w", err)
 	}
@@ -72,14 +60,17 @@ func (r *TournamentRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 		return nil, app.ErrInvalidTournamentID
 	}
 
-	var data []byte
-
 	sqlQuery := `
 		SELECT data FROM tournaments
 		WHERE id = $1
 	`
 
-	if err := r.pool.QueryRow(ctx, sqlQuery, id).Scan(&data); err != nil {
+	return scanTournament(r.pool.QueryRow(ctx, sqlQuery, id), id)
+}
+
+func scanTournament(row pgx.Row, id uuid.UUID) (*domain.Tournament, error) {
+	var data []byte
+	if err := row.Scan(&data); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, app.ErrTournamentNotFound
 		}
@@ -97,17 +88,51 @@ func (r *TournamentRepository) GetByID(ctx context.Context, id uuid.UUID) (*doma
 	return &tr, nil
 }
 
+func (r *TournamentRepository) List(ctx context.Context, limit, offset int) ([]*domain.Tournament, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, data FROM tournaments
+		ORDER BY tournament_date DESC, id DESC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list tournaments: %w", err)
+	}
+	defer rows.Close()
+
+	tournaments := make([]*domain.Tournament, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		var data []byte
+		if err := rows.Scan(&id, &data); err != nil {
+			return nil, fmt.Errorf("scan tournament: %w", err)
+		}
+
+		var tournament domain.Tournament
+		if err := json.Unmarshal(data, &tournament); err != nil {
+			return nil, fmt.Errorf("unmarshal tournament: %w", err)
+		}
+		tournament.ID = id
+		tournaments = append(tournaments, &tournament)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tournaments: %w", err)
+	}
+
+	return tournaments, nil
+}
+
 func (r *TournamentRepository) Update(ctx context.Context, tournament *domain.Tournament) error {
+	return updateTournament(ctx, r.pool, tournament)
+}
+
+func updateTournament(ctx context.Context, db interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, tournament *domain.Tournament) error {
 	if tournament == nil {
 		return errNilTournament
 	}
 	if tournament.ID == uuid.Nil {
 		return app.ErrInvalidTournamentID
-	}
-
-	status, err := statusToString(tournament.Status)
-	if err != nil {
-		return err
 	}
 
 	data, err := json.Marshal(tournament)
@@ -119,13 +144,12 @@ func (r *TournamentRepository) Update(ctx context.Context, tournament *domain.To
 		UPDATE tournaments
 		SET name = $1,
 		    tournament_date = $2,
-		    status = $3,
-		    data = $4,
+		    data = $3,
 		    updated_at = NOW()
-		WHERE id = $5
+		WHERE id = $4
 	`
 
-	result, execErr := r.pool.Exec(ctx, sqlQuery, tournament.Name, tournament.Date, status, data, tournament.ID)
+	result, execErr := db.Exec(ctx, sqlQuery, tournament.Name, tournament.Date, data, tournament.ID)
 	if execErr != nil {
 		return fmt.Errorf("update tournament: %w", execErr)
 	}

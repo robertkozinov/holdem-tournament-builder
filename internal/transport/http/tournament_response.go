@@ -6,194 +6,126 @@ import (
 )
 
 type TournamentResponse struct {
-	ID                string               `json:"id"`
-	Name              string               `json:"name"`
-	Date              time.Time            `json:"date"`
-	Players           []string             `json:"players"`
-	BuyInAmount       int64                `json:"buy_in_amount"`
-	ChipSet           []ChipResponse       `json:"chip_set"`
-	RebuyRules        RebuyRulesResponse   `json:"rebuy_rules"`
-	DurationMinutes   int                  `json:"duration_minutes"`
-	StartingStack     StackPlanResponse    `json:"starting_stack"`
-	BlindStructure    []BlindLevelResponse `json:"blind_structure"`
-	PayoutSpots       []PayoutSpotResponse `json:"payout_spots"`
-	Contributions     map[string]int64     `json:"contributions"`
-	Pot               int64                `json:"pot"`
-	CurrentLevel      int                  `json:"current_level"`
-	CurrentBlindLevel *BlindLevelResponse  `json:"current_blind_level,omitempty"`
-	NextBlindLevel    *BlindLevelResponse  `json:"next_blind_level,omitempty"`
-	LevelStartedAt    *time.Time           `json:"level_started_at,omitempty"`
-	PausedAt          *time.Time           `json:"paused_at,omitempty"`
-	Status            string               `json:"status"`
-	Results           []ResultResponse     `json:"results"`
+	ID                   string               `json:"id"`
+	Name                 string               `json:"name"`
+	Date                 time.Time            `json:"date"`
+	Players              []PlayerResponse     `json:"players"`
+	BuyInAmount          int64                `json:"buy_in_amount"`
+	SettlementMode       string               `json:"settlement_mode"`
+	ChipSet              []ChipResponse       `json:"chip_set"`
+	Style                string               `json:"style"`
+	DurationMinutes      int                  `json:"duration_minutes"`
+	LevelDurationMinutes int                  `json:"level_duration_minutes"`
+	StartingStack        StackPlanResponse    `json:"starting_stack"`
+	BlindStructure       []BlindLevelResponse `json:"blind_structure"`
+	SuggestedPayouts     []PayoutResponse     `json:"suggested_payouts"`
+	Pot                  int64                `json:"pot"`
+	HasResults           bool                 `json:"has_results"`
+	Results              []ResultResponse     `json:"results"`
+	Transfers            []TransferResponse   `json:"transfers"`
 }
-
+type PlayerResponse struct {
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	BuyInPaid    bool            `json:"buy_in_paid"`
+	Rebuys       []RebuyResponse `json:"rebuys"`
+	Contribution int64           `json:"contribution"`
+}
+type RebuyResponse struct {
+	ID   string `json:"id"`
+	Paid bool   `json:"paid"`
+}
 type ChipResponse struct {
 	Value int64 `json:"value"`
 	Count int   `json:"count"`
 }
-
-type RebuyRulesResponse struct {
-	Allowed  bool `json:"allowed"`
-	MaxLevel int  `json:"max_level"`
-}
-
 type StackPlanResponse struct {
 	Distribution []ChipResponse `json:"distribution"`
 	Total        int64          `json:"total"`
 }
-
 type BlindLevelResponse struct {
 	SmallBlind      int64 `json:"small_blind"`
 	BigBlind        int64 `json:"big_blind"`
 	Ante            int64 `json:"ante"`
 	DurationMinutes int   `json:"duration_minutes"`
 }
-
-type PayoutSpotResponse struct {
-	Place       int    `json:"place"`
-	Kind        string `json:"kind"`
-	BuyInsValue int    `json:"buy_ins_value"`
+type PayoutResponse struct {
+	Place int   `json:"place"`
+	Value int64 `json:"value"`
 }
-
 type ResultResponse struct {
-	Name  string `json:"name"`
-	Place int    `json:"place"`
-	Prize int64  `json:"prize"`
+	PlayerID string `json:"player_id"`
+	Name     string `json:"name"`
+	Place    *int   `json:"place"`
+	IsSplit  bool   `json:"is_split"`
+	Prize    int64  `json:"prize"`
+}
+type TransferResponse struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Amount int64  `json:"amount"`
 }
 
-func newTournamentResponse(t *domain.Tournament) TournamentResponse {
-	var currentBlind *BlindLevelResponse
-	if level, err := t.CurrentBlindLevel(); err == nil {
-		resp := newBlindLevelResponse(level)
-		currentBlind = &resp
+func newTournamentResponse(t *domain.Tournament) (TournamentResponse, error) {
+	payouts, err := t.CalculatePayouts()
+	if err != nil {
+		return TournamentResponse{}, err
 	}
-
-	var nextBlind *BlindLevelResponse
-	if level, ok := t.NextBlindLevel(); ok {
-		resp := newBlindLevelResponse(level)
-		nextBlind = &resp
+	players := make([]PlayerResponse, 0, len(t.Players))
+	names := make(map[string]string, len(t.Players))
+	for _, player := range t.Players {
+		rebuys := make([]RebuyResponse, 0, len(player.Rebuys))
+		for _, rebuy := range player.Rebuys {
+			rebuys = append(rebuys, RebuyResponse{ID: rebuy.ID.String(), Paid: rebuy.Paid})
+		}
+		players = append(players, PlayerResponse{ID: player.ID.String(), Name: player.Name, BuyInPaid: player.BuyInPaid, Rebuys: rebuys, Contribution: (1 + int64(len(player.Rebuys))) * t.BuyInAmount})
+		names[player.ID.String()] = player.Name
 	}
-
+	suggested := make([]PayoutResponse, 0, len(payouts))
+	for _, payout := range payouts {
+		suggested = append(suggested, PayoutResponse{Place: payout.Place, Value: payout.Value})
+	}
+	results := make([]ResultResponse, 0, len(t.Results))
+	for _, result := range t.Results {
+		results = append(results, ResultResponse{
+			PlayerID: result.PlayerID.String(), Name: names[result.PlayerID.String()], Place: result.Place, IsSplit: result.Place == nil, Prize: result.Prize,
+		})
+	}
+	transfers := make([]TransferResponse, 0)
+	for _, transfer := range t.CalculateTransfers() {
+		transfers = append(transfers, TransferResponse{From: transfer.From, To: transfer.To, Amount: transfer.Amount})
+	}
 	return TournamentResponse{
-		ID:                t.ID.String(),
-		Name:              t.Name,
-		Date:              t.Date,
-		Players:           t.Players,
-		BuyInAmount:       t.BuyInAmount,
-		ChipSet:           newChipResponses(t.ChipSet),
-		RebuyRules:        newRebuyRulesResponse(t.RebuyRules),
-		DurationMinutes:   int(t.Duration / time.Minute),
-		StartingStack:     newStackPlanResponse(t.StartingStack),
-		BlindStructure:    newBlindLevelResponses(t.BlindStructure),
-		PayoutSpots:       newPayoutSpotResponses(t.PayoutSpots),
-		Contributions:     t.Contributions,
-		Pot:               t.Pot(),
-		CurrentLevel:      t.CurrentLevel,
-		CurrentBlindLevel: currentBlind,
-		NextBlindLevel:    nextBlind,
-		LevelStartedAt:    timePtr(t.LevelStartedAt),
-		PausedAt:          timePtr(t.PausedAt),
-		Status:            tournamentStatusToString(t.Status),
-		Results:           newResultResponses(t.Results),
-	}
+		ID: t.ID.String(), Name: t.Name, Date: t.Date, Players: players, BuyInAmount: t.BuyInAmount, SettlementMode: string(t.SettlementMode),
+		ChipSet: newChipResponses(t.ChipSet), Style: tournamentStyleToString(t.Style), DurationMinutes: int(t.Duration / time.Minute), LevelDurationMinutes: int(t.LevelDuration / time.Minute),
+		StartingStack:  StackPlanResponse{Distribution: newChipResponses(t.StartingStack.Distribution), Total: t.StartingStack.Total()},
+		BlindStructure: newBlindLevelResponses(t.BlindStructure), SuggestedPayouts: suggested, Pot: t.Pot(), HasResults: t.HasResults(), Results: results, Transfers: transfers,
+	}, nil
 }
 
 func newChipResponses(chips []domain.ChipDenomination) []ChipResponse {
 	out := make([]ChipResponse, 0, len(chips))
 	for _, chip := range chips {
-		out = append(out, ChipResponse{
-			Value: chip.Value,
-			Count: chip.Count,
-		})
+		out = append(out, ChipResponse{Value: chip.Value, Count: chip.Count})
 	}
 	return out
 }
-
-func newRebuyRulesResponse(rules domain.RebuyRules) RebuyRulesResponse {
-	return RebuyRulesResponse{
-		Allowed:  rules.Allowed,
-		MaxLevel: rules.MaxLevel,
-	}
-}
-
-func newStackPlanResponse(stack domain.StackPlan) StackPlanResponse {
-	return StackPlanResponse{
-		Distribution: newChipResponses(stack.Distribution),
-		Total:        stack.Total(),
-	}
-}
-
-func newBlindLevelResponse(level domain.BlindLevel) BlindLevelResponse {
-	return BlindLevelResponse{
-		SmallBlind:      level.SmallBlind,
-		BigBlind:        level.BigBlind,
-		Ante:            level.Ante,
-		DurationMinutes: int(level.Duration / time.Minute),
-	}
-}
-
 func newBlindLevelResponses(levels []domain.BlindLevel) []BlindLevelResponse {
 	out := make([]BlindLevelResponse, 0, len(levels))
 	for _, level := range levels {
-		out = append(out, newBlindLevelResponse(level))
+		out = append(out, BlindLevelResponse{SmallBlind: level.SmallBlind, BigBlind: level.BigBlind, Ante: level.Ante, DurationMinutes: int(level.Duration / time.Minute)})
 	}
 	return out
 }
-
-func newPayoutSpotResponses(spots []domain.PayoutSpot) []PayoutSpotResponse {
-	out := make([]PayoutSpotResponse, 0, len(spots))
-	for _, spot := range spots {
-		out = append(out, PayoutSpotResponse{
-			Place:       spot.Place,
-			Kind:        payoutKindToString(spot.Kind),
-			BuyInsValue: spot.BuyInsValue,
-		})
-	}
-	return out
-}
-
-func payoutKindToString(kind domain.PayoutKind) string {
-	switch kind {
-	case domain.PayoutFixed:
-		return "fixed"
-	case domain.PayoutRemainder:
-		return "remainder"
+func tournamentStyleToString(style domain.TournamentStyle) string {
+	switch style {
+	case domain.StyleStandard:
+		return "standard"
+	case domain.StyleTurbo:
+		return "turbo"
+	case domain.StyleDeep:
+		return "deep"
 	default:
 		return "unknown"
 	}
-}
-
-func newResultResponses(results []domain.Result) []ResultResponse {
-	out := make([]ResultResponse, 0, len(results))
-	for _, result := range results {
-		out = append(out, ResultResponse{
-			Name:  result.Name,
-			Place: result.Place,
-			Prize: result.Prize,
-		})
-	}
-	return out
-}
-
-func tournamentStatusToString(status domain.Status) string {
-	switch status {
-	case domain.StatusCreated:
-		return "created"
-	case domain.StatusRunning:
-		return "running"
-	case domain.StatusPaused:
-		return "paused"
-	case domain.StatusFinished:
-		return "finished"
-	default:
-		return "unknown"
-	}
-}
-
-func timePtr(t time.Time) *time.Time {
-	if t.IsZero() {
-		return nil
-	}
-	return &t
 }
