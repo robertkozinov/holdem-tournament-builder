@@ -17,6 +17,7 @@ type Config struct {
 	HTTPAddr        string
 	CookieSecure    bool
 	SessionLifetime time.Duration
+	RequestSafety   RequestSafety
 }
 
 func Load(getenv func(string) string) (Config, error) {
@@ -72,5 +73,9 @@ func Load(getenv func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("PORT must be between 1 and 65535")
 	}
 	cfg.HTTPAddr = ":" + strconv.Itoa(number)
+	cfg.RequestSafety, err = loadRequestSafety(getenv)
+	if err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }

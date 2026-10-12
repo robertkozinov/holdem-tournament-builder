@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"holdem-tournament-builder/internal/config"
 	"holdem-tournament-builder/internal/domain"
 	"holdem-tournament-builder/internal/service"
 )
@@ -56,7 +57,7 @@ func (s *fakeAuthService) CurrentUser(ctx context.Context, id uuid.UUID) (domain
 }
 
 func newTournamentTestRouter(tournament *TournamentHandler) http.Handler {
-	router := NewRouter(tournament, NewAuthHandler(&fakeAuthService{}, CookieOptions{}))
+	router := NewRouter(tournament, NewAuthHandler(&fakeAuthService{}, CookieOptions{}, config.DefaultRequestSafety()))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.AddCookie(&http.Cookie{Name: "holdem_session", Value: "test-session"})
 		router.ServeHTTP(w, r)
