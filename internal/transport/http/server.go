@@ -11,11 +11,13 @@ type Server struct {
 	server *http.Server
 }
 
-func NewServer(handler http.Handler) *Server {
+func NewServer(handler http.Handler, addr string) *Server {
 	return &Server{server: &http.Server{
-		Addr:              ":8080",
+		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}}
 }

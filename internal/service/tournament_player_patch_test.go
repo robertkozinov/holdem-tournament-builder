@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"errors"
 	"math"
 	"slices"
@@ -31,7 +30,7 @@ func TestTournamentService_PatchTournamentPlayerUsesUpdateLocked(t *testing.T) {
 	original := playerPatchFixture(t)
 	paid := true
 	repo := &mockTournamentRepository{getTournament: original}
-	got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), original.ID, original.Players[0].ID, PatchTournamentPlayerInput{BuyInPaid: &paid})
+	got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), original.ID, original.Players[0].ID, PatchTournamentPlayerInput{BuyInPaid: &paid})
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.True(t, got.Players[0].BuyInPaid)
@@ -52,7 +51,7 @@ func TestTournamentService_PatchTournamentPlayerTransactionError(t *testing.T) {
 	rebuys := []domain.Rebuy{{ID: uuid.New(), Paid: true}}
 	repoErr := errors.New("commit err")
 	repo := &mockTournamentRepository{getTournament: original, lockedErr: repoErr}
-	got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), original.ID, original.Players[0].ID, PatchTournamentPlayerInput{BuyInPaid: &paid, Rebuys: &rebuys})
+	got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), original.ID, original.Players[0].ID, PatchTournamentPlayerInput{BuyInPaid: &paid, Rebuys: &rebuys})
 	require.ErrorIs(t, err, repoErr)
 	assert.Nil(t, got)
 	assert.True(t, repo.lockedCalled)
@@ -121,7 +120,7 @@ func TestTournamentService_PatchTournamentPlayer(t *testing.T) {
 				expected.Players[0].Rebuys = slices.Clone(*input.Rebuys)
 			}
 			repo := &mockTournamentRepository{getTournament: original}
-			got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), original.ID, original.Players[0].ID, input)
+			got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), original.ID, original.Players[0].ID, input)
 			require.NoError(t, err)
 			require.NotNil(t, got)
 			assert.Equal(t, expected, got)
@@ -149,7 +148,7 @@ func TestTournamentService_PatchTournamentPlayer(t *testing.T) {
 		index := len(original.Players) - 1
 		paid := true
 		repo := &mockTournamentRepository{getTournament: original}
-		got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), original.ID, original.Players[index].ID, PatchTournamentPlayerInput{BuyInPaid: &paid})
+		got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), original.ID, original.Players[index].ID, PatchTournamentPlayerInput{BuyInPaid: &paid})
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.True(t, got.Players[index].BuyInPaid)
@@ -168,9 +167,9 @@ func TestTournamentService_PatchTournamentPlayer(t *testing.T) {
 		input := PatchTournamentPlayerInput{Rebuys: &rebuys}
 		repo := &mockTournamentRepository{getTournament: original}
 		srv := NewTournamentService(repo)
-		first, err := srv.PatchTournamentPlayer(context.Background(), original.ID, original.Players[0].ID, input)
+		first, err := srv.PatchTournamentPlayer(authenticatedContext(), original.ID, original.Players[0].ID, input)
 		require.NoError(t, err)
-		second, err := srv.PatchTournamentPlayer(context.Background(), original.ID, original.Players[0].ID, input)
+		second, err := srv.PatchTournamentPlayer(authenticatedContext(), original.ID, original.Players[0].ID, input)
 		require.NoError(t, err)
 		assert.Equal(t, first, second)
 		assert.Len(t, second.Players[0].Rebuys, 2)
@@ -197,7 +196,7 @@ func TestTournamentService_PatchTournamentPlayerErrors(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &mockTournamentRepository{}
-			got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), tt.tournamentID, tt.playerID, tt.input)
+			got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), tt.tournamentID, tt.playerID, tt.input)
 			require.ErrorIs(t, err, tt.wantErr)
 			assert.Nil(t, got)
 			assert.False(t, repo.getCalled)
@@ -214,7 +213,7 @@ func TestTournamentService_PatchTournamentPlayerErrors(t *testing.T) {
 		before, err := domain.NewTournament(*original)
 		require.NoError(t, err)
 		repo := &mockTournamentRepository{getTournament: original}
-		got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), original.ID, uuid.New(), PatchTournamentPlayerInput{BuyInPaid: &paid})
+		got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), original.ID, uuid.New(), PatchTournamentPlayerInput{BuyInPaid: &paid})
 		require.ErrorIs(t, err, domain.ErrPlayerNotFound)
 		assert.NotErrorIs(t, err, app.ErrValidation)
 		assert.Nil(t, got)
@@ -264,7 +263,7 @@ func TestTournamentService_PatchTournamentPlayerErrors(t *testing.T) {
 			before, err := domain.NewTournament(*original)
 			require.NoError(t, err)
 			repo := &mockTournamentRepository{getTournament: original}
-			got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), original.ID, original.Players[0].ID, input)
+			got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), original.ID, original.Players[0].ID, input)
 			require.ErrorIs(t, err, app.ErrValidation)
 			assert.ErrorIs(t, err, tt.wantErr)
 			assert.Nil(t, got)
@@ -282,7 +281,7 @@ func TestTournamentService_PatchTournamentPlayerErrors(t *testing.T) {
 	for _, repoErr := range []error{app.ErrTournamentNotFound, errors.New("get err")} {
 		t.Run("read failure", func(t *testing.T) {
 			repo := &mockTournamentRepository{getErr: repoErr}
-			got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), testTournamentID, uuid.New(), PatchTournamentPlayerInput{BuyInPaid: &paid})
+			got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), testTournamentID, uuid.New(), PatchTournamentPlayerInput{BuyInPaid: &paid})
 			require.ErrorIs(t, err, repoErr)
 			assert.Nil(t, got)
 			assert.False(t, repo.updateCalled)
@@ -301,7 +300,7 @@ func TestTournamentService_PatchTournamentPlayerErrors(t *testing.T) {
 		repoErr := errors.New("update err")
 		repo := &mockTournamentRepository{getTournament: original, updateErr: repoErr}
 		rebuys := []domain.Rebuy{{ID: uuid.New(), Paid: true}}
-		got, err := NewTournamentService(repo).PatchTournamentPlayer(context.Background(), original.ID, original.Players[0].ID, PatchTournamentPlayerInput{BuyInPaid: &paid, Rebuys: &rebuys})
+		got, err := NewTournamentService(repo).PatchTournamentPlayer(authenticatedContext(), original.ID, original.Players[0].ID, PatchTournamentPlayerInput{BuyInPaid: &paid, Rebuys: &rebuys})
 		require.ErrorIs(t, err, repoErr)
 		assert.Nil(t, got)
 		assert.Equal(t, 1, repo.updateCount)

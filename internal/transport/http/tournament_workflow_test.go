@@ -19,16 +19,23 @@ import (
 )
 
 // The real HTTP and service layers use a snapshot repository without external services.
-type memoryTournamentRepository struct{ cards map[uuid.UUID][]byte }
-
-func (r *memoryTournamentRepository) Create(ctx context.Context, tr *domain.Tournament) (uuid.UUID, error) {
-	tr.ID = uuid.New()
-	return tr.ID, r.Update(ctx, tr)
+type memoryTournamentRepository struct {
+	cards  map[uuid.UUID][]byte
+	owners map[uuid.UUID]uuid.UUID
 }
 
-func (r *memoryTournamentRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
+func (r *memoryTournamentRepository) Create(ctx context.Context, ownerID uuid.UUID, tr *domain.Tournament) (uuid.UUID, error) {
+	if r.owners == nil {
+		r.owners = make(map[uuid.UUID]uuid.UUID)
+	}
+	tr.ID = uuid.New()
+	r.owners[tr.ID] = ownerID
+	return tr.ID, r.Update(ctx, ownerID, tr)
+}
+
+func (r *memoryTournamentRepository) GetByID(ctx context.Context, ownerID, id uuid.UUID) (*domain.Tournament, error) {
 	data, ok := r.cards[id]
-	if !ok {
+	if !ok || ownerID == uuid.Nil || r.owners[id] != ownerID {
 		return nil, app.ErrTournamentNotFound
 	}
 	var tr domain.Tournament
@@ -36,7 +43,10 @@ func (r *memoryTournamentRepository) GetByID(ctx context.Context, id uuid.UUID) 
 	return &tr, err
 }
 
-func (r *memoryTournamentRepository) Update(ctx context.Context, tr *domain.Tournament) error {
+func (r *memoryTournamentRepository) Update(ctx context.Context, ownerID uuid.UUID, tr *domain.Tournament) error {
+	if ownerID == uuid.Nil || r.owners[tr.ID] != ownerID {
+		return app.ErrTournamentNotFound
+	}
 	data, err := json.Marshal(tr)
 	if err == nil {
 		r.cards[tr.ID] = data
@@ -44,8 +54,8 @@ func (r *memoryTournamentRepository) Update(ctx context.Context, tr *domain.Tour
 	return err
 }
 
-func (r *memoryTournamentRepository) UpdateLocked(ctx context.Context, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error) {
-	original, err := r.GetByID(ctx, id)
+func (r *memoryTournamentRepository) UpdateLocked(ctx context.Context, ownerID, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error) {
+	original, err := r.GetByID(ctx, ownerID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -53,24 +63,28 @@ func (r *memoryTournamentRepository) UpdateLocked(ctx context.Context, id uuid.U
 	if err != nil {
 		return nil, err
 	}
-	if err := r.Update(ctx, updated); err != nil {
+	if err := r.Update(ctx, ownerID, updated); err != nil {
 		return nil, err
 	}
 	return updated, nil
 }
 
-func (r *memoryTournamentRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	if _, ok := r.cards[id]; !ok {
+func (r *memoryTournamentRepository) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
+	if _, err := r.GetByID(ctx, ownerID, id); err != nil {
 		return app.ErrTournamentNotFound
 	}
 	delete(r.cards, id)
+	delete(r.owners, id)
 	return nil
 }
 
-func (r *memoryTournamentRepository) List(ctx context.Context, limit, offset int) ([]*domain.Tournament, error) {
+func (r *memoryTournamentRepository) List(ctx context.Context, ownerID uuid.UUID, limit, offset int) ([]*domain.Tournament, error) {
 	all := make([]*domain.Tournament, 0, len(r.cards))
 	for id := range r.cards {
-		tr, err := r.GetByID(ctx, id)
+		if r.owners[id] != ownerID {
+			continue
+		}
+		tr, err := r.GetByID(ctx, ownerID, id)
 		if err != nil {
 			return nil, err
 		}
@@ -85,7 +99,7 @@ func (r *memoryTournamentRepository) List(ctx context.Context, limit, offset int
 
 func TestTournamentHTTPWorkflow(t *testing.T) {
 	repo := &memoryTournamentRepository{cards: make(map[uuid.UUID][]byte)}
-	router := NewRouter(NewTournamentHandler(service.NewTournamentService(repo)))
+	router := newTournamentTestRouter(NewTournamentHandler(service.NewTournamentService(repo)))
 	request := func(method, path, body string, status int) *httptest.ResponseRecorder {
 		t.Helper()
 		rec := httptest.NewRecorder()
@@ -178,20 +192,20 @@ func TestTournamentHTTPWorkflow(t *testing.T) {
 
 func TestTournamentHTTPPlayerPatchRegression(t *testing.T) {
 	repo := &memoryTournamentRepository{cards: make(map[uuid.UUID][]byte)}
-	router := NewRouter(NewTournamentHandler(service.NewTournamentService(repo)))
+	router := newTournamentTestRouter(NewTournamentHandler(service.NewTournamentService(repo)))
 	create := httptest.NewRecorder()
 	router.ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/tournaments", strings.NewReader(validCreateTournamentJSON())))
 	require.Equal(t, http.StatusCreated, create.Code, create.Body.String())
 	var created CreateTournamentResponse
 	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &created))
 	id := uuid.MustParse(created.ID)
-	before, err := repo.GetByID(context.Background(), id)
+	before, err := repo.GetByID(context.Background(), testUserID, id)
 	require.NoError(t, err)
 	path := "/tournaments/" + created.ID + "/players/" + before.Players[0].ID.String()
 	patch := httptest.NewRecorder()
 	router.ServeHTTP(patch, httptest.NewRequest(http.MethodPatch, path, strings.NewReader(`{"buy_in_paid":true}`)))
 	require.Equal(t, http.StatusOK, patch.Code, patch.Body.String())
-	after, err := repo.GetByID(context.Background(), id)
+	after, err := repo.GetByID(context.Background(), testUserID, id)
 	require.NoError(t, err)
 	before.Players[0].BuyInPaid = true
 	assert.Equal(t, before, after)
@@ -290,7 +304,7 @@ func TestTournamentHTTPRejectsDuplicateChipValues(t *testing.T) {
 			for _, method := range []string{http.MethodPost, http.MethodPut} {
 				t.Run(method, func(t *testing.T) {
 					repo := &memoryTournamentRepository{cards: make(map[uuid.UUID][]byte)}
-					router := NewRouter(NewTournamentHandler(service.NewTournamentService(repo)))
+					router := newTournamentTestRouter(NewTournamentHandler(service.NewTournamentService(repo)))
 					request := func(method, path, body string) *httptest.ResponseRecorder {
 						t.Helper()
 						rec := httptest.NewRecorder()

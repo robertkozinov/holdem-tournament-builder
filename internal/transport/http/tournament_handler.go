@@ -31,7 +31,11 @@ func NewTournamentHandler(service TournamentService) *TournamentHandler {
 const maxRequestBytes = 1 << 20
 
 func decodeRequest[T any](w http.ResponseWriter, r *http.Request) (*T, bool) {
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	return decodeLimitedRequest[T](w, r, maxRequestBytes)
+}
+
+func decodeLimitedRequest[T any](w http.ResponseWriter, r *http.Request, limit int64) (*T, bool) {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	decoder.DisallowUnknownFields()
 	var req *T
 	err := decoder.Decode(&req)

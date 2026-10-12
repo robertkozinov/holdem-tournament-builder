@@ -29,14 +29,14 @@ func TestTournamentRepository_UpdateLocked(t *testing.T) {
 	tx := &stubTournamentTx{
 		queryRow: func(_ context.Context, query string, args ...any) pgx.Row {
 			events = append(events, "select")
-			assert.Equal(t, "SELECT data FROM tournaments WHERE id = $1 FOR UPDATE", compactSQL(query))
-			assert.Equal(t, []any{id}, args)
+			assert.Equal(t, "SELECT data FROM tournaments WHERE id = $1 AND user_id = $2 FOR UPDATE", compactSQL(query))
+			assert.Equal(t, []any{id, testOwnerID}, args)
 			return tournamentRowFunc(func(dest ...any) error { *(dest[0].(*[]byte)) = data; return nil })
 		},
 		exec: func(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
 			events = append(events, "update")
-			assert.Equal(t, "UPDATE tournaments SET name = $1, tournament_date = $2, data = $3, updated_at = NOW() WHERE id = $4", compactSQL(query))
-			require.Len(t, args, 4)
+			assert.Equal(t, "UPDATE tournaments SET name = $1, tournament_date = $2, data = $3, updated_at = NOW() WHERE id = $4 AND user_id = $5", compactSQL(query))
+			require.Len(t, args, 5)
 			assert.Equal(t, []any{changed.Name, changed.Date}, args[:2])
 			assertStoredTournament(t, changed, args[2].([]byte))
 			assert.Equal(t, id, args[3])
@@ -56,7 +56,7 @@ func TestTournamentRepository_UpdateLocked(t *testing.T) {
 		assert.Equal(t, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, options)
 		return tx, nil
 	}}
-	got, err := (&TournamentRepository{pool: db}).UpdateLocked(context.Background(), id, func(current *domain.Tournament) (*domain.Tournament, error) {
+	got, err := (&TournamentRepository{pool: db}).UpdateLocked(context.Background(), testOwnerID, id, func(current *domain.Tournament) (*domain.Tournament, error) {
 		events = append(events, "change")
 		expected := *tr
 		expected.ID = id
@@ -165,7 +165,7 @@ func TestTournamentRepository_UpdateLockedErrors(t *testing.T) {
 				}
 				return tx, nil
 			}}
-			got, err := (&TournamentRepository{pool: db}).UpdateLocked(ctx, tr.ID, func(current *domain.Tournament) (*domain.Tournament, error) {
+			got, err := (&TournamentRepository{pool: db}).UpdateLocked(ctx, testOwnerID, tr.ID, func(current *domain.Tournament) (*domain.Tournament, error) {
 				events = append(events, "change")
 				switch tc.stage {
 				case "change", "rollback failure":
@@ -204,7 +204,7 @@ func TestTournamentRepository_UpdateLockedErrors(t *testing.T) {
 	}
 	t.Run("invalid id does not begin transaction", func(t *testing.T) {
 		called := false
-		got, err := NewTournamentRepository(nil).UpdateLocked(context.Background(), uuid.Nil, func(tr *domain.Tournament) (*domain.Tournament, error) {
+		got, err := NewTournamentRepository(nil).UpdateLocked(context.Background(), testOwnerID, uuid.Nil, func(tr *domain.Tournament) (*domain.Tournament, error) {
 			called = true
 			return tr, nil
 		})

@@ -15,6 +15,7 @@ import (
 	"holdem-tournament-builder/internal/service"
 	transport "holdem-tournament-builder/internal/transport/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
@@ -26,15 +27,16 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
 		tr.Players[0].BuyInPaid, tr.Players[1].BuyInPaid = false, false
-		id, err := repo.Create(ctx, tr)
+		id, err := repo.Create(ctx, testOwnerID, tr)
 		require.NoError(t, err)
 		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 		require.NoError(t, err)
 		t.Cleanup(func() { rollbackTournamentTestTx(tx) })
 		var lockedID uuid.UUID
 		require.NoError(t, tx.QueryRow(ctx, "SELECT id FROM tournaments WHERE id = $1 FOR UPDATE", id).Scan(&lockedID))
-		router := transport.NewRouter(transport.NewTournamentHandler(service.NewTournamentService(repo)))
-		workerCtx, cancel := context.WithCancel(ctx)
+		router := chi.NewRouter()
+		router.Patch("/tournaments/{id}/players/{player_id}", transport.NewTournamentHandler(service.NewTournamentService(repo)).PatchTournamentPlayer)
+		workerCtx, cancel := context.WithCancel(app.WithUserID(ctx, testOwnerID))
 		var workers sync.WaitGroup
 		t.Cleanup(func() {
 			cancel()
@@ -70,7 +72,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 			rec := <-responses
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		}
-		got, err := repo.GetByID(ctx, id)
+		got, err := repo.GetByID(ctx, testOwnerID, id)
 		require.NoError(t, err)
 		tr.Players[0].BuyInPaid, tr.Players[1].BuyInPaid = true, true
 		assert.Equal(t, tr, got)
@@ -79,10 +81,10 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
 		tr.Players[0].BuyInPaid, tr.Players[1].BuyInPaid = false, false
-		id, err := repo.Create(ctx, tr)
+		id, err := repo.Create(ctx, testOwnerID, tr)
 		require.NoError(t, err)
 		other := validTournament(t)
-		otherID, err := repo.Create(ctx, other)
+		otherID, err := repo.Create(ctx, testOwnerID, other)
 		require.NoError(t, err)
 
 		locked := make(chan struct{})
@@ -100,7 +102,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			_, err := repo.UpdateLocked(workerCtx, id, func(current *domain.Tournament) (*domain.Tournament, error) {
+			_, err := repo.UpdateLocked(workerCtx, testOwnerID, id, func(current *domain.Tournament) (*domain.Tournament, error) {
 				close(locked)
 				select {
 				case <-release:
@@ -122,7 +124,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			_, err := repo.UpdateLocked(workerCtx, id, func(current *domain.Tournament) (*domain.Tournament, error) {
+			_, err := repo.UpdateLocked(workerCtx, testOwnerID, id, func(current *domain.Tournament) (*domain.Tournament, error) {
 				if !current.Players[0].BuyInPaid {
 					return nil, errors.New("second update read an outdated card")
 				}
@@ -151,7 +153,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 			t.Fatalf("second update must wait for the first: %v", err)
 		default:
 		}
-		updatedOther, err := repo.UpdateLocked(ctx, otherID, func(current *domain.Tournament) (*domain.Tournament, error) {
+		updatedOther, err := repo.UpdateLocked(ctx, testOwnerID, otherID, func(current *domain.Tournament) (*domain.Tournament, error) {
 			current.Name = "Independent Game"
 			return current, nil
 		})
@@ -161,11 +163,11 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		require.NoError(t, <-firstDone)
 		require.NoError(t, <-secondDone)
 
-		got, err := repo.GetByID(ctx, id)
+		got, err := repo.GetByID(ctx, testOwnerID, id)
 		require.NoError(t, err)
 		tr.Players[0].BuyInPaid, tr.Players[1].BuyInPaid = true, true
 		assert.Equal(t, tr, got)
-		storedOther, err := repo.GetByID(ctx, otherID)
+		storedOther, err := repo.GetByID(ctx, testOwnerID, otherID)
 		require.NoError(t, err)
 		other.Name = "Independent Game"
 		assert.Equal(t, other, storedOther)
@@ -173,34 +175,34 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 	t.Run("rolls back rejected change and permits the next update", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, tr)
+		id, err := repo.Create(ctx, testOwnerID, tr)
 		require.NoError(t, err)
 		cause := errors.New("change rejected")
-		got, err := repo.UpdateLocked(ctx, id, func(current *domain.Tournament) (*domain.Tournament, error) {
+		got, err := repo.UpdateLocked(ctx, testOwnerID, id, func(current *domain.Tournament) (*domain.Tournament, error) {
 			current.Name = "Must Not Be Saved"
 			current.Players[0].BuyInPaid = true
 			return current, cause
 		})
 		require.ErrorIs(t, err, cause)
 		assert.Nil(t, got)
-		stored, err := repo.GetByID(ctx, id)
+		stored, err := repo.GetByID(ctx, testOwnerID, id)
 		require.NoError(t, err)
 		assert.Equal(t, tr, stored)
-		got, err = repo.UpdateLocked(ctx, id, func(current *domain.Tournament) (*domain.Tournament, error) {
+		got, err = repo.UpdateLocked(ctx, testOwnerID, id, func(current *domain.Tournament) (*domain.Tournament, error) {
 			current.Name = "Next Game"
 			return current, nil
 		})
 		require.NoError(t, err)
 		tr.Name = "Next Game"
 		assert.Equal(t, tr, got)
-		stored, err = repo.GetByID(ctx, id)
+		stored, err = repo.GetByID(ctx, testOwnerID, id)
 		require.NoError(t, err)
 		assert.Equal(t, tr, stored)
 	})
 	t.Run("cancels lock wait without changing the card", func(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, tr)
+		id, err := repo.Create(ctx, testOwnerID, tr)
 		require.NoError(t, err)
 		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 		require.NoError(t, err)
@@ -223,7 +225,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			got, err := repo.UpdateLocked(waitCtx, id, func(current *domain.Tournament) (*domain.Tournament, error) {
+			got, err := repo.UpdateLocked(waitCtx, testOwnerID, id, func(current *domain.Tournament) (*domain.Tournament, error) {
 				called = true
 				current.Name = "Must Not Be Saved"
 				return current, nil
@@ -249,10 +251,10 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		assert.Nil(t, cancelled.card)
 		assert.False(t, called)
 		require.NoError(t, tx.Rollback(ctx))
-		stored, err := repo.GetByID(ctx, id)
+		stored, err := repo.GetByID(ctx, testOwnerID, id)
 		require.NoError(t, err)
 		assert.Equal(t, tr, stored)
-		got, err := repo.UpdateLocked(ctx, id, func(current *domain.Tournament) (*domain.Tournament, error) {
+		got, err := repo.UpdateLocked(ctx, testOwnerID, id, func(current *domain.Tournament) (*domain.Tournament, error) {
 			current.Players[0].BuyInPaid = true
 			return current, nil
 		})
@@ -262,7 +264,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 	t.Run("missing tournament never invokes change", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
 		called := false
-		got, err := repo.UpdateLocked(ctx, uuid.New(), func(current *domain.Tournament) (*domain.Tournament, error) {
+		got, err := repo.UpdateLocked(ctx, testOwnerID, uuid.New(), func(current *domain.Tournament) (*domain.Tournament, error) {
 			called = true
 			return current, nil
 		})

@@ -13,6 +13,8 @@ import (
 
 func handleServiceError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, app.ErrUnauthenticated):
+		response.WriteError(w, http.StatusUnauthorized, "authentication required")
 	case errors.Is(err, app.ErrValidation):
 		response.WriteError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, app.ErrInvalidTournamentID):

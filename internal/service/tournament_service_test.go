@@ -14,7 +14,14 @@ import (
 
 var testTournamentID = uuid.MustParse("00000000-0000-0000-0000-000000000010")
 
+var testUserID = uuid.MustParse("00000000-0000-0000-0000-000000000020")
+
+func authenticatedContext() context.Context {
+	return app.WithUserID(context.Background(), testUserID)
+}
+
 type mockTournamentRepository struct {
+	ownerID             uuid.UUID
 	createCalled        bool
 	createdTournament   *domain.Tournament
 	createID            uuid.UUID
@@ -42,7 +49,8 @@ type mockTournamentRepository struct {
 	listErr             error
 }
 
-func (r *mockTournamentRepository) Create(ctx context.Context, tr *domain.Tournament) (uuid.UUID, error) {
+func (r *mockTournamentRepository) Create(ctx context.Context, ownerID uuid.UUID, tr *domain.Tournament) (uuid.UUID, error) {
+	r.ownerID = ownerID
 	r.createCalled = true
 	r.createdTournament = tr
 	if r.createErr != nil {
@@ -51,13 +59,15 @@ func (r *mockTournamentRepository) Create(ctx context.Context, tr *domain.Tourna
 	tr.ID = r.createID
 	return r.createID, nil
 }
-func (r *mockTournamentRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
+func (r *mockTournamentRepository) GetByID(ctx context.Context, ownerID, id uuid.UUID) (*domain.Tournament, error) {
+	r.ownerID = ownerID
 	r.getCalled = true
 	r.getCount++
 	r.getID = id
 	return r.getTournament, r.getErr
 }
-func (r *mockTournamentRepository) Update(ctx context.Context, tr *domain.Tournament) error {
+func (r *mockTournamentRepository) Update(ctx context.Context, ownerID uuid.UUID, tr *domain.Tournament) error {
+	r.ownerID = ownerID
 	r.updateCalled = true
 	r.updateCount++
 	r.ordinaryUpdateCount++
@@ -68,7 +78,8 @@ func (r *mockTournamentRepository) Update(ctx context.Context, tr *domain.Tourna
 	r.getTournament = tr
 	return nil
 }
-func (r *mockTournamentRepository) UpdateLocked(ctx context.Context, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error) {
+func (r *mockTournamentRepository) UpdateLocked(ctx context.Context, ownerID, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error) {
+	r.ownerID = ownerID
 	r.lockedCalled = true
 	r.lockedCount++
 	r.lockedID = id
@@ -91,12 +102,14 @@ func (r *mockTournamentRepository) UpdateLocked(ctx context.Context, id uuid.UUI
 	r.getTournament = updated
 	return updated, nil
 }
-func (r *mockTournamentRepository) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *mockTournamentRepository) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
+	r.ownerID = ownerID
 	r.deleteCalled = true
 	r.deleteID = id
 	return r.deleteErr
 }
-func (r *mockTournamentRepository) List(ctx context.Context, limit, offset int) ([]*domain.Tournament, error) {
+func (r *mockTournamentRepository) List(ctx context.Context, ownerID uuid.UUID, limit, offset int) ([]*domain.Tournament, error) {
+	r.ownerID = ownerID
 	r.listCalled = true
 	r.limit = limit
 	r.offset = offset
@@ -130,7 +143,7 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 		in.Players[0].ID = uuid.Nil
 		in.Players[0].Rebuys = []domain.Rebuy{{Paid: true}}
 		repo := &mockTournamentRepository{createID: testTournamentID}
-		id, err := NewTournamentService(repo).CreateTournament(context.Background(), in)
+		id, err := NewTournamentService(repo).CreateTournament(authenticatedContext(), in)
 		require.NoError(t, err)
 		assert.Equal(t, testTournamentID, id)
 		tr := repo.createdTournament
@@ -168,7 +181,7 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 			in := validCreateTournamentInput()
 			tt.change(&in)
 			repo := &mockTournamentRepository{}
-			id, err := NewTournamentService(repo).CreateTournament(context.Background(), in)
+			id, err := NewTournamentService(repo).CreateTournament(authenticatedContext(), in)
 			require.ErrorIs(t, err, app.ErrValidation)
 			assert.ErrorIs(t, err, tt.wantErr)
 			assert.Equal(t, uuid.Nil, id)
@@ -178,7 +191,7 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 	t.Run("repository error stays identifiable", func(t *testing.T) {
 		repoErr := errors.New("repo err")
 		repo := &mockTournamentRepository{createErr: repoErr}
-		id, err := NewTournamentService(repo).CreateTournament(context.Background(), validCreateTournamentInput())
+		id, err := NewTournamentService(repo).CreateTournament(authenticatedContext(), validCreateTournamentInput())
 		require.ErrorIs(t, err, repoErr)
 		assert.NotErrorIs(t, err, app.ErrValidation)
 		assert.Equal(t, uuid.Nil, id)
@@ -196,7 +209,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		in.Players[0].BuyInPaid = true
 		in.Players[0].Rebuys = []domain.Rebuy{{ID: uuid.New(), Paid: false}, {ID: uuid.New(), Paid: true}}
 		in.Results = []domain.Result{{PlayerID: in.Players[0].ID, Prize: 3700}, {PlayerID: in.Players[1].ID, Prize: 2300}}
-		first, err := srv.SaveTournament(context.Background(), testTournamentID, in)
+		first, err := srv.SaveTournament(authenticatedContext(), testTournamentID, in)
 		require.NoError(t, err)
 		assert.Equal(t, testTournamentID, first.ID)
 		assert.Equal(t, int64(1000), first.BuyInAmount)
@@ -206,7 +219,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		assert.Len(t, first.Results, 2)
 		assert.Empty(t, first.CalculateTransfers())
 		assert.NotEmpty(t, first.StartingStack.Distribution)
-		second, err := srv.SaveTournament(context.Background(), testTournamentID, in)
+		second, err := srv.SaveTournament(authenticatedContext(), testTournamentID, in)
 		require.NoError(t, err)
 		assert.Equal(t, first, second)
 		assert.Equal(t, 2, repo.updateCount)
@@ -220,7 +233,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		assert.Empty(t, original.Players[0].Rebuys)
 		place := 2
 		in.Results = []domain.Result{{PlayerID: in.Players[2].ID, Place: &place, Prize: 6000}}
-		corrected, err := srv.SaveTournament(context.Background(), testTournamentID, in)
+		corrected, err := srv.SaveTournament(authenticatedContext(), testTournamentID, in)
 		require.NoError(t, err)
 		require.Len(t, corrected.Results, 1)
 		assert.Equal(t, in.Players[2].ID, corrected.Results[0].PlayerID)
@@ -229,7 +242,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		assert.Equal(t, int64(3700), first.Results[0].Prize)
 		in.Results = nil
 		in.Players[0].Rebuys = nil
-		cleared, err := srv.SaveTournament(context.Background(), testTournamentID, in)
+		cleared, err := srv.SaveTournament(authenticatedContext(), testTournamentID, in)
 		require.NoError(t, err)
 		assert.False(t, cleared.HasResults())
 		assert.Equal(t, int64(4000), cleared.Pot())
@@ -241,7 +254,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		in.Players[0].Name = "Renamed"
 		place := 1
 		in.Results = []domain.Result{{PlayerID: in.Players[0].ID, Place: &place, Prize: 4000}}
-		tr, err := NewTournamentService(repo).SaveTournament(context.Background(), testTournamentID, in)
+		tr, err := NewTournamentService(repo).SaveTournament(authenticatedContext(), testTournamentID, in)
 		require.NoError(t, err)
 		require.NotEmpty(t, tr.CalculateTransfers())
 		assert.Equal(t, "Renamed", tr.CalculateTransfers()[0].To)
@@ -251,7 +264,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: serviceTournamentFixture(t, in)}
 		in.Players = append(in.Players, domain.TournamentPlayer{ID: uuid.New(), Name: "E"})
 		in.LevelDuration = 30 * time.Minute
-		tr, err := NewTournamentService(repo).SaveTournament(context.Background(), testTournamentID, in)
+		tr, err := NewTournamentService(repo).SaveTournament(authenticatedContext(), testTournamentID, in)
 		require.NoError(t, err)
 		assert.Equal(t, int64(5000), tr.Pot())
 		assert.Len(t, tr.BlindStructure, 4)
@@ -276,7 +289,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 			original := serviceTournamentFixture(t, in)
 			repo := &mockTournamentRepository{getTournament: original}
 			tt.change(&in)
-			tr, err := NewTournamentService(repo).SaveTournament(context.Background(), testTournamentID, in)
+			tr, err := NewTournamentService(repo).SaveTournament(authenticatedContext(), testTournamentID, in)
 			require.ErrorIs(t, err, app.ErrValidation)
 			assert.ErrorIs(t, err, tt.wantErr)
 			assert.Nil(t, tr)
@@ -291,7 +304,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		repo := &mockTournamentRepository{getTournament: original, updateErr: repoErr}
 		in.Players[0].Name = "Changed"
 		in.Name = "Changed"
-		tr, err := NewTournamentService(repo).SaveTournament(context.Background(), testTournamentID, in)
+		tr, err := NewTournamentService(repo).SaveTournament(authenticatedContext(), testTournamentID, in)
 		require.ErrorIs(t, err, repoErr)
 		assert.Nil(t, tr)
 		assert.Equal(t, 1, repo.updateCount)
@@ -300,14 +313,14 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 	})
 	t.Run("get error avoids update", func(t *testing.T) {
 		repo := &mockTournamentRepository{getErr: app.ErrTournamentNotFound}
-		tr, err := NewTournamentService(repo).SaveTournament(context.Background(), testTournamentID, validSaveTournamentInput())
+		tr, err := NewTournamentService(repo).SaveTournament(authenticatedContext(), testTournamentID, validSaveTournamentInput())
 		require.ErrorIs(t, err, app.ErrTournamentNotFound)
 		assert.Nil(t, tr)
 		assert.False(t, repo.updateCalled)
 	})
 	t.Run("invalid id avoids repository", func(t *testing.T) {
 		repo := &mockTournamentRepository{}
-		tr, err := NewTournamentService(repo).SaveTournament(context.Background(), uuid.Nil, validSaveTournamentInput())
+		tr, err := NewTournamentService(repo).SaveTournament(authenticatedContext(), uuid.Nil, validSaveTournamentInput())
 		require.ErrorIs(t, err, app.ErrInvalidTournamentID)
 		assert.Nil(t, tr)
 		assert.False(t, repo.getCalled)
@@ -318,7 +331,7 @@ func TestTournamentService_GetTournamentByID(t *testing.T) {
 	t.Run("read has no writes", func(t *testing.T) {
 		want := &domain.Tournament{ID: testTournamentID}
 		repo := &mockTournamentRepository{getTournament: want}
-		got, err := NewTournamentService(repo).GetTournamentByID(context.Background(), testTournamentID)
+		got, err := NewTournamentService(repo).GetTournamentByID(authenticatedContext(), testTournamentID)
 		require.NoError(t, err)
 		assert.Same(t, want, got)
 		assert.Equal(t, testTournamentID, repo.getID)
@@ -326,7 +339,7 @@ func TestTournamentService_GetTournamentByID(t *testing.T) {
 	})
 	t.Run("invalid id", func(t *testing.T) {
 		repo := &mockTournamentRepository{}
-		got, err := NewTournamentService(repo).GetTournamentByID(context.Background(), uuid.Nil)
+		got, err := NewTournamentService(repo).GetTournamentByID(authenticatedContext(), uuid.Nil)
 		require.ErrorIs(t, err, app.ErrInvalidTournamentID)
 		assert.Nil(t, got)
 		assert.False(t, repo.getCalled)
@@ -334,7 +347,7 @@ func TestTournamentService_GetTournamentByID(t *testing.T) {
 	t.Run("repo fails", func(t *testing.T) {
 		repoErr := errors.New("repo err")
 		repo := &mockTournamentRepository{getErr: repoErr}
-		got, err := NewTournamentService(repo).GetTournamentByID(context.Background(), testTournamentID)
+		got, err := NewTournamentService(repo).GetTournamentByID(authenticatedContext(), testTournamentID)
 		require.ErrorIs(t, err, repoErr)
 		assert.Nil(t, got)
 	})
@@ -342,24 +355,24 @@ func TestTournamentService_GetTournamentByID(t *testing.T) {
 func TestTournamentService_DeleteTournament(t *testing.T) {
 	t.Run("deletes", func(t *testing.T) {
 		repo := &mockTournamentRepository{}
-		require.NoError(t, NewTournamentService(repo).DeleteTournament(context.Background(), testTournamentID))
+		require.NoError(t, NewTournamentService(repo).DeleteTournament(authenticatedContext(), testTournamentID))
 		assert.Equal(t, testTournamentID, repo.deleteID)
 	})
 	t.Run("invalid id", func(t *testing.T) {
 		repo := &mockTournamentRepository{}
-		require.ErrorIs(t, NewTournamentService(repo).DeleteTournament(context.Background(), uuid.Nil), app.ErrInvalidTournamentID)
+		require.ErrorIs(t, NewTournamentService(repo).DeleteTournament(authenticatedContext(), uuid.Nil), app.ErrInvalidTournamentID)
 		assert.False(t, repo.deleteCalled)
 	})
 	t.Run("repo fails", func(t *testing.T) {
 		repo := &mockTournamentRepository{deleteErr: app.ErrTournamentNotFound}
-		require.ErrorIs(t, NewTournamentService(repo).DeleteTournament(context.Background(), testTournamentID), app.ErrTournamentNotFound)
+		require.ErrorIs(t, NewTournamentService(repo).DeleteTournament(authenticatedContext(), testTournamentID), app.ErrTournamentNotFound)
 	})
 }
 func TestTournamentService_ListTournaments(t *testing.T) {
 	t.Run("passes pagination", func(t *testing.T) {
 		want := []*domain.Tournament{{ID: testTournamentID}}
 		repo := &mockTournamentRepository{tournaments: want}
-		got, err := NewTournamentService(repo).ListTournaments(context.Background(), 20, 10)
+		got, err := NewTournamentService(repo).ListTournaments(authenticatedContext(), 20, 10)
 		require.NoError(t, err)
 		assert.Equal(t, want, got)
 		assert.Equal(t, 20, repo.limit)
@@ -368,7 +381,7 @@ func TestTournamentService_ListTournaments(t *testing.T) {
 	for _, args := range [][2]int{{0, 0}, {101, 0}, {-1, 0}, {10, -1}} {
 		t.Run("invalid pagination", func(t *testing.T) {
 			repo := &mockTournamentRepository{}
-			got, err := NewTournamentService(repo).ListTournaments(context.Background(), args[0], args[1])
+			got, err := NewTournamentService(repo).ListTournaments(authenticatedContext(), args[0], args[1])
 			require.ErrorIs(t, err, app.ErrValidation)
 			assert.Nil(t, got)
 			assert.False(t, repo.listCalled)
@@ -377,7 +390,7 @@ func TestTournamentService_ListTournaments(t *testing.T) {
 	t.Run("repo fails", func(t *testing.T) {
 		repoErr := errors.New("list err")
 		repo := &mockTournamentRepository{listErr: repoErr}
-		got, err := NewTournamentService(repo).ListTournaments(context.Background(), 50, 0)
+		got, err := NewTournamentService(repo).ListTournaments(authenticatedContext(), 50, 0)
 		require.ErrorIs(t, err, repoErr)
 		assert.Nil(t, got)
 	})
