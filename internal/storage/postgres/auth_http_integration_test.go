@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"holdem-tournament-builder/internal/auth"
+	"holdem-tournament-builder/internal/config"
 	"holdem-tournament-builder/internal/domain"
 	"holdem-tournament-builder/internal/service"
 	redisstore "holdem-tournament-builder/internal/storage/redis"
@@ -50,7 +51,7 @@ func TestAuthenticatedHTTP_Integration(t *testing.T) {
 	sessions := redisstore.NewSessionStore(redisClient)
 	accounts := service.NewAuthService(users, sessions, &auth.PasswordHasher{}, tokens, 30*24*time.Hour)
 	router := func() http.Handler {
-		return transport.NewRouter(transport.NewTournamentHandler(service.NewTournamentService(cards)), transport.NewAuthHandler(accounts, transport.CookieOptions{Secure: true}))
+		return transport.NewRouter(transport.NewTournamentHandler(service.NewTournamentService(cards)), transport.NewAuthHandler(accounts, transport.CookieOptions{Secure: true}, config.DefaultRequestSafety()))
 	}
 	server := httptest.NewTLSServer(router())
 	t.Cleanup(server.Close)
@@ -234,7 +235,7 @@ func TestAuthenticatedHTTP_Integration(t *testing.T) {
 	restartedAccounts := service.NewAuthService(NewUserRepository(restartedPool), redisstore.NewSessionStore(restartedRedis), &auth.PasswordHasher{}, &auth.SessionTokenGenerator{}, 30*24*time.Hour)
 	server = httptest.NewTLSServer(transport.NewRouter(
 		transport.NewTournamentHandler(service.NewTournamentService(NewTournamentRepository(restartedPool))),
-		transport.NewAuthHandler(restartedAccounts, transport.CookieOptions{Secure: true}),
+		transport.NewAuthHandler(restartedAccounts, transport.CookieOptions{Secure: true}, config.DefaultRequestSafety()),
 	))
 	t.Cleanup(server.Close)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/auth/me", nil)
@@ -272,7 +273,7 @@ func TestAuthenticatedHTTP_Integration(t *testing.T) {
 	unavailable := goredis.NewClient(options)
 	require.NoError(t, unavailable.Close())
 	unavailableService := service.NewAuthService(users, redisstore.NewSessionStore(unavailable), &auth.PasswordHasher{}, tokens, 30*24*time.Hour)
-	down := httptest.NewTLSServer(transport.NewRouter(transport.NewTournamentHandler(service.NewTournamentService(cards)), transport.NewAuthHandler(unavailableService, transport.CookieOptions{Secure: true})))
+	down := httptest.NewTLSServer(transport.NewRouter(transport.NewTournamentHandler(service.NewTournamentService(cards)), transport.NewAuthHandler(unavailableService, transport.CookieOptions{Secure: true}, config.DefaultRequestSafety())))
 	t.Cleanup(down.Close)
 	downReq, err := http.NewRequestWithContext(ctx, http.MethodGet, down.URL+"/auth/me", nil)
 	require.NoError(t, err)

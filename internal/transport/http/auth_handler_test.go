@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"holdem-tournament-builder/internal/app"
+	"holdem-tournament-builder/internal/config"
 	"holdem-tournament-builder/internal/domain"
 	"holdem-tournament-builder/internal/service"
 )
@@ -31,7 +32,7 @@ func authRequest(router http.Handler, method, path, body string, cookies ...*htt
 }
 
 func authRouter(s *fakeAuthService, secure bool) (*AuthHandler, http.Handler) {
-	h := NewAuthHandler(s, CookieOptions{Secure: secure})
+	h := NewAuthHandler(s, CookieOptions{Secure: secure}, config.DefaultRequestSafety())
 	h.now = func() time.Time { return time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC) }
 	return h, NewRouter(NewTournamentHandler(&mockTournamentService{}), h)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"holdem-tournament-builder/internal/config"
 	"holdem-tournament-builder/internal/domain"
 	"holdem-tournament-builder/internal/service"
 )
@@ -110,7 +111,7 @@ func TestLimiterBoundsAndIdleCleanup(t *testing.T) {
 
 func TestLimiterDefaultCapacityWithoutHTTPLogging(t *testing.T) {
 	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
-	limiter := newRequestSafety(func() time.Time { return now }).limiter
+	limiter := newRequestSafety(func() time.Time { return now }, config.DefaultRequestSafety()).limiter
 	for i := range 10000 {
 		allowed, _ := limiter.allow(strconv.Itoa(i), generalRate)
 		require.True(t, allowed, "client %d", i)

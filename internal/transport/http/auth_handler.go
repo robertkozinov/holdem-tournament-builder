@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"holdem-tournament-builder/internal/app"
+	"holdem-tournament-builder/internal/config"
 	"holdem-tournament-builder/internal/domain"
 	"holdem-tournament-builder/internal/service"
 	"holdem-tournament-builder/internal/transport/response"
@@ -34,9 +35,9 @@ type AuthHandler struct {
 	safety  *requestSafety
 }
 
-func NewAuthHandler(service AuthService, cookies CookieOptions) *AuthHandler {
+func NewAuthHandler(service AuthService, cookies CookieOptions, safety config.RequestSafety) *AuthHandler {
 	h := &AuthHandler{service: service, cookies: cookies, now: time.Now}
-	h.safety = newRequestSafety(func() time.Time { return h.now() })
+	h.safety = newRequestSafety(func() time.Time { return h.now() }, safety)
 	return h
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+	"holdem-tournament-builder/internal/config"
 	"holdem-tournament-builder/internal/transport/response"
 )
 
@@ -47,17 +48,21 @@ type requestSafety struct {
 	hashing chan struct{}
 }
 
-func newRequestSafety(now func() time.Time) *requestSafety {
+func newRequestSafety(now func() time.Time, cfg config.RequestSafety) *requestSafety {
 	return &requestSafety{
 		limiter: &ipRateLimiter{
-			now:             now,
-			limits:          [3]rateLimitOptions{{rate: 2, burst: 60}, {rate: rate.Limit(5) / 60, burst: 3}, {rate: rate.Limit(10) / 60, burst: 10}},
+			now: now,
+			limits: [3]rateLimitOptions{
+				{rate: rate.Limit(cfg.General.RequestsPerMinute) / 60, burst: cfg.General.Burst},
+				{rate: rate.Limit(cfg.Register.RequestsPerMinute) / 60, burst: cfg.Register.Burst},
+				{rate: rate.Limit(cfg.Login.RequestsPerMinute) / 60, burst: cfg.Login.Burst},
+			},
 			clients:         make(map[string]*clientBuckets),
-			maxClients:      10000,
-			idle:            10 * time.Minute,
-			cleanupInterval: time.Minute,
+			maxClients:      cfg.MaxClients,
+			idle:            cfg.Idle,
+			cleanupInterval: cfg.CleanupInterval,
 		},
-		hashing: make(chan struct{}, 2),
+		hashing: make(chan struct{}, cfg.MaxConcurrentAuthRequests),
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"holdem-tournament-builder/internal/app"
+	"holdem-tournament-builder/internal/config"
 	"holdem-tournament-builder/internal/service"
 )
 
@@ -94,7 +95,7 @@ func TestRouterRequiresAuthHandler(t *testing.T) {
 }
 
 func TestProtectedTournamentResponsesAreNotCached(t *testing.T) {
-	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), NewAuthHandler(&fakeAuthService{}, CookieOptions{}))
+	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), NewAuthHandler(&fakeAuthService{}, CookieOptions{}, config.DefaultRequestSafety()))
 	for _, tc := range []struct {
 		name    string
 		cookies []*http.Cookie
