@@ -21,13 +21,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var testOwnerID = uuid.MustParse("00000000-0000-0000-0000-000000000020")
+
 func setupTournamentRepositoryTest(t *testing.T) (context.Context, *pgxpool.Pool, *TournamentRepository) {
 	t.Helper()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("integration test skipped: TEST_DATABASE_URL is not set")
 	}
-	config, err := pgxpool.ParseConfig(databaseURL)
+	config, err := parseTestPostgresURL(databaseURL)
 	require.NoError(t, err)
 	require.True(t, strings.HasSuffix(config.ConnConfig.Database, "_test"), "refusing to connect to a non-test database")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -40,6 +42,8 @@ func setupTournamentRepositoryTest(t *testing.T) (context.Context, *pgxpool.Pool
 	defer conn.Release()
 	require.NoError(t, verifyTournamentTestDatabase(ctx, config.ConnConfig.Database, conn))
 	_, err = conn.Exec(ctx, "TRUNCATE TABLE tournaments")
+	require.NoError(t, err)
+	_, err = conn.Exec(ctx, "INSERT INTO users (id, login, password_hash, created_at) VALUES ($1, 'test-owner', 'test-hash', NOW()) ON CONFLICT (id) DO NOTHING", testOwnerID)
 	require.NoError(t, err)
 	return ctx, pool, NewTournamentRepository(pool)
 }
@@ -88,7 +92,7 @@ func TestTournamentRepository_Create(t *testing.T) {
 	t.Run("creates tournament", func(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, tr)
+		id, err := repo.Create(ctx, testOwnerID, tr)
 		require.NoError(t, err)
 		assert.NotEqual(t, uuid.Nil, id)
 		assert.Equal(t, id, tr.ID)
@@ -102,7 +106,7 @@ func TestTournamentRepository_Create(t *testing.T) {
 		assert.True(t, tr.Date.Equal(storedDate))
 	})
 	t.Run("returns error when tournament is nil", func(t *testing.T) {
-		id, err := NewTournamentRepository(nil).Create(context.Background(), nil)
+		id, err := NewTournamentRepository(nil).Create(context.Background(), testOwnerID, nil)
 		require.ErrorIs(t, err, errNilTournament)
 		assert.Equal(t, uuid.Nil, id)
 	})
@@ -110,12 +114,12 @@ func TestTournamentRepository_Create(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
 		first := validTournament(t)
 		first.ID = uuid.New()
-		createdID, err := repo.Create(ctx, first)
+		createdID, err := repo.Create(ctx, testOwnerID, first)
 		require.NoError(t, err)
 		assert.Equal(t, first.ID, createdID)
 		second := validTournament(t)
 		second.ID = first.ID
-		id, err := repo.Create(ctx, second)
+		id, err := repo.Create(ctx, testOwnerID, second)
 		var pgErr *pgconn.PgError
 		require.ErrorAs(t, err, &pgErr)
 		assert.Equal(t, "23505", pgErr.Code)
@@ -124,13 +128,14 @@ func TestTournamentRepository_Create(t *testing.T) {
 	t.Run("stores complete card without status", func(t *testing.T) {
 		tr := validTournament(t)
 		db := &stubTournamentDB{exec: func(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
-			assert.Equal(t, "INSERT INTO tournaments (id, name, tournament_date, data) VALUES ($1, $2, $3, $4)", compactSQL(query))
-			require.Len(t, args, 4)
+			assert.Equal(t, "INSERT INTO tournaments (id, name, tournament_date, data, user_id) VALUES ($1, $2, $3, $4, $5)", compactSQL(query))
+			require.Len(t, args, 5)
+			assert.Equal(t, testOwnerID, args[4])
 			assert.Equal(t, []any{tr.ID, tr.Name, tr.Date}, args[:3])
 			assertStoredTournament(t, tr, args[3].([]byte))
 			return pgconn.NewCommandTag("INSERT 0 1"), nil
 		}}
-		id, err := (&TournamentRepository{pool: db}).Create(context.Background(), tr)
+		id, err := (&TournamentRepository{pool: db}).Create(context.Background(), testOwnerID, tr)
 		require.NoError(t, err)
 		assert.NotEqual(t, uuid.Nil, id)
 		assert.Equal(t, tr.ID, id)
@@ -141,20 +146,20 @@ func TestTournamentRepository_GetByID(t *testing.T) {
 	t.Run("gets complete tournament", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, tr)
+		id, err := repo.Create(ctx, testOwnerID, tr)
 		require.NoError(t, err)
-		got, err := repo.GetByID(ctx, id)
+		got, err := repo.GetByID(ctx, testOwnerID, id)
 		require.NoError(t, err)
 		assert.Equal(t, tr, got)
 	})
 	t.Run("returns error when id is empty", func(t *testing.T) {
-		got, err := NewTournamentRepository(nil).GetByID(context.Background(), uuid.Nil)
+		got, err := NewTournamentRepository(nil).GetByID(context.Background(), testOwnerID, uuid.Nil)
 		require.ErrorIs(t, err, app.ErrInvalidTournamentID)
 		assert.Nil(t, got)
 	})
 	t.Run("returns not found when tournament does not exist", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
-		got, err := repo.GetByID(ctx, uuid.New())
+		got, err := repo.GetByID(ctx, testOwnerID, uuid.New())
 		require.ErrorIs(t, err, app.ErrTournamentNotFound)
 		assert.Nil(t, got)
 	})
@@ -165,11 +170,11 @@ func TestTournamentRepository_GetByID(t *testing.T) {
 		require.NoError(t, err)
 		id := uuid.New()
 		db := &stubTournamentDB{queryRow: func(_ context.Context, query string, args ...any) pgx.Row {
-			assert.Equal(t, "SELECT data FROM tournaments WHERE id = $1", compactSQL(query))
-			assert.Equal(t, []any{id}, args)
+			assert.Equal(t, "SELECT data FROM tournaments WHERE id = $1 AND user_id = $2", compactSQL(query))
+			assert.Equal(t, []any{id, testOwnerID}, args)
 			return tournamentRowFunc(func(dest ...any) error { *(dest[0].(*[]byte)) = data; return nil })
 		}}
-		got, err := (&TournamentRepository{pool: db}).GetByID(context.Background(), id)
+		got, err := (&TournamentRepository{pool: db}).GetByID(context.Background(), testOwnerID, id)
 		require.NoError(t, err)
 		tr.ID = id
 		assert.Equal(t, tr, got)
@@ -178,7 +183,7 @@ func TestTournamentRepository_GetByID(t *testing.T) {
 		db := &stubTournamentDB{queryRow: func(context.Context, string, ...any) pgx.Row {
 			return tournamentRowFunc(func(dest ...any) error { *(dest[0].(*[]byte)) = []byte(`{"Players":"invalid"}`); return nil })
 		}}
-		got, err := (&TournamentRepository{pool: db}).GetByID(context.Background(), uuid.New())
+		got, err := (&TournamentRepository{pool: db}).GetByID(context.Background(), testOwnerID, uuid.New())
 		var cause *json.UnmarshalTypeError
 		require.ErrorAs(t, err, &cause)
 		assert.Nil(t, got)
@@ -189,7 +194,7 @@ func TestTournamentRepository_Update(t *testing.T) {
 	t.Run("replaces complete tournament card", func(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, tr)
+		id, err := repo.Create(ctx, testOwnerID, tr)
 		require.NoError(t, err)
 		tr.Name = "Saturday Game"
 		tr.Date = tr.Date.AddDate(0, 0, 1)
@@ -207,8 +212,8 @@ func TestTournamentRepository_Update(t *testing.T) {
 		tr.Players = append(tr.Players, domain.TournamentPlayer{ID: uuid.New(), Name: "C", Rebuys: []domain.Rebuy{}})
 		tr.Results = []domain.Result{{PlayerID: tr.Players[1].ID, Place: nil, Prize: 5000}}
 		for i := 0; i < 2; i++ {
-			require.NoError(t, repo.Update(ctx, tr))
-			got, err := repo.GetByID(ctx, id)
+			require.NoError(t, repo.Update(ctx, testOwnerID, tr))
+			got, err := repo.GetByID(ctx, testOwnerID, id)
 			require.NoError(t, err)
 			assert.Equal(t, tr, got)
 		}
@@ -222,56 +227,56 @@ func TestTournamentRepository_Update(t *testing.T) {
 		require.NoError(t, pool.QueryRow(ctx, "SELECT COUNT(*) FROM tournaments").Scan(&count))
 		assert.Equal(t, 1, count)
 		tr.Results = []domain.Result{}
-		require.NoError(t, repo.Update(ctx, tr))
-		got, err := repo.GetByID(ctx, id)
+		require.NoError(t, repo.Update(ctx, testOwnerID, tr))
+		got, err := repo.GetByID(ctx, testOwnerID, id)
 		require.NoError(t, err)
 		assert.Equal(t, tr, got)
 		assert.NotNil(t, got.Results)
 		assert.Empty(t, got.Results)
 	})
 	t.Run("returns error when tournament is nil", func(t *testing.T) {
-		require.ErrorIs(t, NewTournamentRepository(nil).Update(context.Background(), nil), errNilTournament)
+		require.ErrorIs(t, NewTournamentRepository(nil).Update(context.Background(), testOwnerID, nil), errNilTournament)
 	})
 	t.Run("returns error when id is empty", func(t *testing.T) {
-		require.ErrorIs(t, NewTournamentRepository(nil).Update(context.Background(), validTournament(t)), app.ErrInvalidTournamentID)
+		require.ErrorIs(t, NewTournamentRepository(nil).Update(context.Background(), testOwnerID, validTournament(t)), app.ErrInvalidTournamentID)
 	})
 	t.Run("returns not found when tournament does not exist", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
 		tr.ID = uuid.New()
-		require.ErrorIs(t, repo.Update(ctx, tr), app.ErrTournamentNotFound)
+		require.ErrorIs(t, repo.Update(ctx, testOwnerID, tr), app.ErrTournamentNotFound)
 	})
 	t.Run("stores complete card without status", func(t *testing.T) {
 		tr := validTournament(t)
 		tr.ID = uuid.New()
 		db := &stubTournamentDB{exec: func(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
-			assert.Equal(t, "UPDATE tournaments SET name = $1, tournament_date = $2, data = $3, updated_at = NOW() WHERE id = $4", compactSQL(query))
-			require.Len(t, args, 4)
+			assert.Equal(t, "UPDATE tournaments SET name = $1, tournament_date = $2, data = $3, updated_at = NOW() WHERE id = $4 AND user_id = $5", compactSQL(query))
+			require.Len(t, args, 5)
 			assert.Equal(t, []any{tr.Name, tr.Date}, args[:2])
 			assertStoredTournament(t, tr, args[2].([]byte))
 			assert.Equal(t, tr.ID, args[3])
 			return pgconn.NewCommandTag("UPDATE 1"), nil
 		}}
-		require.NoError(t, (&TournamentRepository{pool: db}).Update(context.Background(), tr))
+		require.NoError(t, (&TournamentRepository{pool: db}).Update(context.Background(), testOwnerID, tr))
 	})
 }
 
 func TestTournamentRepository_Delete(t *testing.T) {
 	t.Run("deletes tournament", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
-		id, err := repo.Create(ctx, validTournament(t))
+		id, err := repo.Create(ctx, testOwnerID, validTournament(t))
 		require.NoError(t, err)
-		require.NoError(t, repo.Delete(ctx, id))
-		got, err := repo.GetByID(ctx, id)
+		require.NoError(t, repo.Delete(ctx, testOwnerID, id))
+		got, err := repo.GetByID(ctx, testOwnerID, id)
 		require.ErrorIs(t, err, app.ErrTournamentNotFound)
 		assert.Nil(t, got)
 	})
 	t.Run("returns error when id is empty", func(t *testing.T) {
-		require.ErrorIs(t, NewTournamentRepository(nil).Delete(context.Background(), uuid.Nil), app.ErrInvalidTournamentID)
+		require.ErrorIs(t, NewTournamentRepository(nil).Delete(context.Background(), testOwnerID, uuid.Nil), app.ErrInvalidTournamentID)
 	})
 	t.Run("returns not found when tournament does not exist", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
-		require.ErrorIs(t, repo.Delete(ctx, uuid.New()), app.ErrTournamentNotFound)
+		require.ErrorIs(t, repo.Delete(ctx, testOwnerID, uuid.New()), app.ErrTournamentNotFound)
 	})
 }
 
@@ -285,11 +290,11 @@ func TestTournamentRepository_MissingRows(t *testing.T) {
 	repo := &TournamentRepository{pool: db}
 	tr := validTournament(t)
 	tr.ID = uuid.New()
-	got, err := repo.GetByID(context.Background(), tr.ID)
+	got, err := repo.GetByID(context.Background(), testOwnerID, tr.ID)
 	require.ErrorIs(t, err, app.ErrTournamentNotFound)
 	assert.Nil(t, got)
-	require.ErrorIs(t, repo.Update(context.Background(), tr), app.ErrTournamentNotFound)
-	require.ErrorIs(t, repo.Delete(context.Background(), tr.ID), app.ErrTournamentNotFound)
+	require.ErrorIs(t, repo.Update(context.Background(), testOwnerID, tr), app.ErrTournamentNotFound)
+	require.ErrorIs(t, repo.Delete(context.Background(), testOwnerID, tr.ID), app.ErrTournamentNotFound)
 }
 
 func TestTournamentRepository_WrapsDatabaseErrors(t *testing.T) {
@@ -303,14 +308,14 @@ func TestTournamentRepository_WrapsDatabaseErrors(t *testing.T) {
 	repo := &TournamentRepository{pool: db}
 	tr := validTournament(t)
 	tr.ID = uuid.New()
-	id, err := repo.Create(context.Background(), tr)
+	id, err := repo.Create(context.Background(), testOwnerID, tr)
 	require.ErrorIs(t, err, cause)
 	assert.Equal(t, uuid.Nil, id)
-	got, err := repo.GetByID(context.Background(), tr.ID)
+	got, err := repo.GetByID(context.Background(), testOwnerID, tr.ID)
 	require.ErrorIs(t, err, cause)
 	assert.Nil(t, got)
-	require.ErrorIs(t, repo.Update(context.Background(), tr), cause)
-	require.ErrorIs(t, repo.Delete(context.Background(), tr.ID), cause)
+	require.ErrorIs(t, repo.Update(context.Background(), testOwnerID, tr), cause)
+	require.ErrorIs(t, repo.Delete(context.Background(), testOwnerID, tr.ID), cause)
 }
 
 func TestTournamentRepository_ListQueryError(t *testing.T) {
@@ -319,7 +324,7 @@ func TestTournamentRepository_ListQueryError(t *testing.T) {
 	t.Cleanup(pool.Close)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	tournaments, err := NewTournamentRepository(pool).List(ctx, 50, 0)
+	tournaments, err := NewTournamentRepository(pool).List(ctx, testOwnerID, 50, 0)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, tournaments)
 }
@@ -328,11 +333,11 @@ func TestTournamentRepository_List(t *testing.T) {
 	t.Run("returns empty nonnil slice", func(t *testing.T) {
 		rows := &stubTournamentRows{index: -1}
 		db := &stubTournamentDB{query: func(_ context.Context, query string, args ...any) (pgx.Rows, error) {
-			assert.Equal(t, "SELECT id, data FROM tournaments ORDER BY tournament_date DESC, id DESC LIMIT $1 OFFSET $2", compactSQL(query))
-			assert.Equal(t, []any{50, 5}, args)
+			assert.Equal(t, "SELECT id, data FROM tournaments WHERE user_id = $1 ORDER BY tournament_date DESC, id DESC LIMIT $2 OFFSET $3", compactSQL(query))
+			assert.Equal(t, []any{testOwnerID, 50, 5}, args)
 			return rows, nil
 		}}
-		got, err := (&TournamentRepository{pool: db}).List(context.Background(), 50, 5)
+		got, err := (&TournamentRepository{pool: db}).List(context.Background(), testOwnerID, 50, 5)
 		require.NoError(t, err)
 		assert.NotNil(t, got)
 		assert.Empty(t, got)
@@ -348,7 +353,7 @@ func TestTournamentRepository_List(t *testing.T) {
 		ids := []uuid.UUID{uuid.New(), uuid.New()}
 		rows := &stubTournamentRows{index: -1, records: []storedTournamentRow{{ids[0], firstData}, {ids[1], secondData}}}
 		db := &stubTournamentDB{query: func(context.Context, string, ...any) (pgx.Rows, error) { return rows, nil }}
-		got, err := (&TournamentRepository{pool: db}).List(context.Background(), 2, 0)
+		got, err := (&TournamentRepository{pool: db}).List(context.Background(), testOwnerID, 2, 0)
 		require.NoError(t, err)
 		first.ID, second.ID = ids[0], ids[1]
 		assert.Equal(t, []*domain.Tournament{first, second}, got)
@@ -365,12 +370,12 @@ func TestTournamentRepository_List(t *testing.T) {
 		cards[2].Date = cards[1].Date
 		cards[3].Date = cards[3].Date.AddDate(0, 0, -1)
 		for _, index := range []int{1, 3, 0, 2} {
-			_, err := repo.Create(ctx, cards[index])
+			_, err := repo.Create(ctx, testOwnerID, cards[index])
 			require.NoError(t, err)
 		}
 		ordered := []*domain.Tournament{cards[2], cards[1], cards[0], cards[3]}
 		for _, page := range []struct{ limit, offset int }{{100, 0}, {2, 0}, {2, 1}, {2, 2}, {1, 3}, {2, 4}, {1, 100}} {
-			got, err := repo.List(ctx, page.limit, page.offset)
+			got, err := repo.List(ctx, testOwnerID, page.limit, page.offset)
 			require.NoError(t, err)
 			require.NotNil(t, got)
 			if page.offset >= len(ordered) {
@@ -381,15 +386,15 @@ func TestTournamentRepository_List(t *testing.T) {
 			assert.Equal(t, ordered[page.offset:end], got)
 		}
 		cards[3].Date = cards[1].Date.AddDate(0, 0, 1)
-		require.NoError(t, repo.Update(ctx, cards[3]))
-		got, err := repo.List(ctx, 1, 0)
+		require.NoError(t, repo.Update(ctx, testOwnerID, cards[3]))
+		got, err := repo.List(ctx, testOwnerID, 1, 0)
 		require.NoError(t, err)
 		assert.Equal(t, []*domain.Tournament{cards[3]}, got)
 	})
 	t.Run("wraps query error", func(t *testing.T) {
 		cause := errors.New("query failed")
 		db := &stubTournamentDB{query: func(context.Context, string, ...any) (pgx.Rows, error) { return nil, cause }}
-		got, err := (&TournamentRepository{pool: db}).List(context.Background(), 50, 0)
+		got, err := (&TournamentRepository{pool: db}).List(context.Background(), testOwnerID, 50, 0)
 		require.ErrorIs(t, err, cause)
 		assert.Nil(t, got)
 	})
@@ -408,7 +413,7 @@ func TestTournamentRepository_List(t *testing.T) {
 				rows.records[0].data = []byte(`{"Results":"invalid"}`)
 			}
 			db := &stubTournamentDB{query: func(context.Context, string, ...any) (pgx.Rows, error) { return rows, nil }}
-			got, err := (&TournamentRepository{pool: db}).List(context.Background(), 50, 0)
+			got, err := (&TournamentRepository{pool: db}).List(context.Background(), testOwnerID, 50, 0)
 			if name == "invalid json" {
 				var jsonErr *json.UnmarshalTypeError
 				require.ErrorAs(t, err, &jsonErr)

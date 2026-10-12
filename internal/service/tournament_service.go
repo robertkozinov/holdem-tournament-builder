@@ -12,12 +12,12 @@ import (
 )
 
 type TournamentRepository interface {
-	Create(ctx context.Context, tournament *domain.Tournament) (uuid.UUID, error)
-	GetByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error)
-	Update(ctx context.Context, tournament *domain.Tournament) error
-	UpdateLocked(ctx context.Context, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error)
-	Delete(ctx context.Context, id uuid.UUID) error
-	List(ctx context.Context, limit, offset int) ([]*domain.Tournament, error)
+	Create(ctx context.Context, ownerID uuid.UUID, tournament *domain.Tournament) (uuid.UUID, error)
+	GetByID(ctx context.Context, ownerID, id uuid.UUID) (*domain.Tournament, error)
+	Update(ctx context.Context, ownerID uuid.UUID, tournament *domain.Tournament) error
+	UpdateLocked(ctx context.Context, ownerID, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error)
+	Delete(ctx context.Context, ownerID, id uuid.UUID) error
+	List(ctx context.Context, ownerID uuid.UUID, limit, offset int) ([]*domain.Tournament, error)
 }
 
 type TournamentService struct{ repo TournamentRepository }
@@ -27,12 +27,16 @@ func NewTournamentService(repo TournamentRepository) *TournamentService {
 }
 
 func (s *TournamentService) CreateTournament(ctx context.Context, input CreateTournamentInput) (uuid.UUID, error) {
+	ownerID, err := app.UserID(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
 	editable := SaveTournamentInput{Name: input.Name, Date: input.Date, Players: input.Players, SettlementMode: input.SettlementMode, ChipSet: input.ChipSet, Style: input.Style, Duration: input.Duration, LevelDuration: input.LevelDuration}
 	tr, err := buildTournament(editable, input.BuyInAmount, true)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	id, err := s.repo.Create(ctx, tr)
+	id, err := s.repo.Create(ctx, ownerID, tr)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create tournament: %w", err)
 	}
@@ -40,6 +44,10 @@ func (s *TournamentService) CreateTournament(ctx context.Context, input CreateTo
 }
 
 func (s *TournamentService) SaveTournament(ctx context.Context, id uuid.UUID, input SaveTournamentInput) (*domain.Tournament, error) {
+	ownerID, err := app.UserID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	original, err := s.GetTournamentByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -50,7 +58,7 @@ func (s *TournamentService) SaveTournament(ctx context.Context, id uuid.UUID, in
 		return nil, err
 	}
 	candidate.ID = id
-	if err := s.repo.Update(ctx, candidate); err != nil {
+	if err := s.repo.Update(ctx, ownerID, candidate); err != nil {
 		return nil, fmt.Errorf("save tournament: %w", err)
 	}
 	return candidate, nil
@@ -95,10 +103,14 @@ func buildTournament(input SaveTournamentInput, buyIn int64, generateIDs bool) (
 }
 
 func (s *TournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
+	ownerID, err := app.UserID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if id == uuid.Nil {
 		return nil, app.ErrInvalidTournamentID
 	}
-	tr, err := s.repo.GetByID(ctx, id)
+	tr, err := s.repo.GetByID(ctx, ownerID, id)
 	if err != nil {
 		return nil, fmt.Errorf("get tournament: %w", err)
 	}
@@ -106,20 +118,28 @@ func (s *TournamentService) GetTournamentByID(ctx context.Context, id uuid.UUID)
 }
 
 func (s *TournamentService) DeleteTournament(ctx context.Context, id uuid.UUID) error {
+	ownerID, err := app.UserID(ctx)
+	if err != nil {
+		return err
+	}
 	if id == uuid.Nil {
 		return app.ErrInvalidTournamentID
 	}
-	if err := s.repo.Delete(ctx, id); err != nil {
+	if err := s.repo.Delete(ctx, ownerID, id); err != nil {
 		return fmt.Errorf("delete tournament: %w", err)
 	}
 	return nil
 }
 
 func (s *TournamentService) ListTournaments(ctx context.Context, limit, offset int) ([]*domain.Tournament, error) {
+	ownerID, err := app.UserID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, fmt.Errorf("%w: limit must be 1..100 and offset non-negative", app.ErrValidation)
 	}
-	tournaments, err := s.repo.List(ctx, limit, offset)
+	tournaments, err := s.repo.List(ctx, ownerID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list tournaments: %w", err)
 	}

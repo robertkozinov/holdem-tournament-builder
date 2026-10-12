@@ -18,6 +18,10 @@ type PatchTournamentPlayerInput struct {
 }
 
 func (s *TournamentService) PatchTournamentPlayer(ctx context.Context, tournamentID, playerID uuid.UUID, input PatchTournamentPlayerInput) (*domain.Tournament, error) {
+	ownerID, err := app.UserID(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if tournamentID == uuid.Nil {
 		return nil, app.ErrInvalidTournamentID
 	}
@@ -27,7 +31,7 @@ func (s *TournamentService) PatchTournamentPlayer(ctx context.Context, tournamen
 	if input.BuyInPaid == nil && input.Rebuys == nil {
 		return nil, fmt.Errorf("%w: at least one player field is required", app.ErrValidation)
 	}
-	updated, err := s.repo.UpdateLocked(ctx, tournamentID, func(original *domain.Tournament) (*domain.Tournament, error) {
+	updated, err := s.repo.UpdateLocked(ctx, ownerID, tournamentID, func(original *domain.Tournament) (*domain.Tournament, error) {
 		index := slices.IndexFunc(original.Players, func(player domain.TournamentPlayer) bool {
 			return player.ID == playerID
 		})

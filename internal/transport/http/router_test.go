@@ -14,7 +14,7 @@ import (
 func TestNewRouter(t *testing.T) {
 	t.Run("registers health route", func(t *testing.T) {
 		handler := NewTournamentHandler(&mockTournamentService{})
-		router := NewRouter(handler)
+		router := newTournamentTestRouter(handler)
 
 		req := httptest.NewRequest(http.MethodGet, "/health", nil)
 		rec := httptest.NewRecorder()
@@ -29,7 +29,7 @@ func TestNewRouter(t *testing.T) {
 		id := uuid.MustParse("00000000-0000-0000-0000-000000000010")
 		service := &mockTournamentService{createID: id}
 		handler := NewTournamentHandler(service)
-		router := NewRouter(handler)
+		router := newTournamentTestRouter(handler)
 
 		req := httptest.NewRequest(http.MethodPost, "/tournaments", strings.NewReader(validCreateTournamentJSON()))
 		rec := httptest.NewRecorder()
@@ -41,7 +41,7 @@ func TestNewRouter(t *testing.T) {
 	})
 
 	t.Run("does not register removed runtime routes", func(t *testing.T) {
-		router := NewRouter(NewTournamentHandler(&mockTournamentService{}))
+		router := newTournamentTestRouter(NewTournamentHandler(&mockTournamentService{}))
 		id := uuid.New().String()
 
 		for _, path := range []string{"start", "pause", "resume", "level-up", "knockout", "finish", "rebuy", "preview"} {

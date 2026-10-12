@@ -14,7 +14,10 @@ import (
 
 // UpdateLocked applies change under a row lock and returns only after commit.
 // The callback must not access the repository or perform external operations.
-func (r *TournamentRepository) UpdateLocked(ctx context.Context, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error) {
+func (r *TournamentRepository) UpdateLocked(ctx context.Context, ownerID, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error) {
+	if ownerID == uuid.Nil {
+		return nil, app.ErrUnauthenticated
+	}
 	if id == uuid.Nil {
 		return nil, app.ErrInvalidTournamentID
 	}
@@ -31,9 +34,9 @@ func (r *TournamentRepository) UpdateLocked(ctx context.Context, id uuid.UUID, c
 
 	original, err := scanTournament(tx.QueryRow(ctx, `
 		SELECT data FROM tournaments
-		WHERE id = $1
+		WHERE id = $1 AND user_id = $2
 		FOR UPDATE
-	`, id), id)
+	`, id, ownerID), id)
 	if err != nil {
 		return nil, fmt.Errorf("lock tournament: %w", err)
 	}
@@ -47,7 +50,7 @@ func (r *TournamentRepository) UpdateLocked(ctx context.Context, id uuid.UUID, c
 	if updated.ID != id {
 		return nil, fmt.Errorf("changed tournament id does not match locked row")
 	}
-	if err := updateTournament(ctx, tx, updated); err != nil {
+	if err := updateTournament(ctx, tx, ownerID, updated); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

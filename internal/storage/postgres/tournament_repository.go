@@ -29,7 +29,10 @@ func NewTournamentRepository(pool *pgxpool.Pool) *TournamentRepository {
 	return &TournamentRepository{pool: pool}
 }
 
-func (r *TournamentRepository) Create(ctx context.Context, tournament *domain.Tournament) (uuid.UUID, error) {
+func (r *TournamentRepository) Create(ctx context.Context, ownerID uuid.UUID, tournament *domain.Tournament) (uuid.UUID, error) {
+	if ownerID == uuid.Nil {
+		return uuid.Nil, app.ErrUnauthenticated
+	}
 	if tournament == nil {
 		return uuid.Nil, errNilTournament
 	}
@@ -43,11 +46,11 @@ func (r *TournamentRepository) Create(ctx context.Context, tournament *domain.To
 	}
 
 	createQuery := `
-	INSERT INTO tournaments (id, name, tournament_date, data)
-	VALUES ($1, $2, $3, $4)
+	INSERT INTO tournaments (id, name, tournament_date, data, user_id)
+	VALUES ($1, $2, $3, $4, $5)
 	`
 
-	_, err = r.pool.Exec(ctx, createQuery, tournament.ID, tournament.Name, tournament.Date, data)
+	_, err = r.pool.Exec(ctx, createQuery, tournament.ID, tournament.Name, tournament.Date, data, ownerID)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("insert tournament: %w", err)
 	}
@@ -55,17 +58,20 @@ func (r *TournamentRepository) Create(ctx context.Context, tournament *domain.To
 	return tournament.ID, nil
 }
 
-func (r *TournamentRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Tournament, error) {
+func (r *TournamentRepository) GetByID(ctx context.Context, ownerID, id uuid.UUID) (*domain.Tournament, error) {
+	if ownerID == uuid.Nil {
+		return nil, app.ErrUnauthenticated
+	}
 	if id == uuid.Nil {
 		return nil, app.ErrInvalidTournamentID
 	}
 
 	sqlQuery := `
 		SELECT data FROM tournaments
-		WHERE id = $1
+		WHERE id = $1 AND user_id = $2
 	`
 
-	return scanTournament(r.pool.QueryRow(ctx, sqlQuery, id), id)
+	return scanTournament(r.pool.QueryRow(ctx, sqlQuery, id, ownerID), id)
 }
 
 func scanTournament(row pgx.Row, id uuid.UUID) (*domain.Tournament, error) {
@@ -88,12 +94,16 @@ func scanTournament(row pgx.Row, id uuid.UUID) (*domain.Tournament, error) {
 	return &tr, nil
 }
 
-func (r *TournamentRepository) List(ctx context.Context, limit, offset int) ([]*domain.Tournament, error) {
+func (r *TournamentRepository) List(ctx context.Context, ownerID uuid.UUID, limit, offset int) ([]*domain.Tournament, error) {
+	if ownerID == uuid.Nil {
+		return nil, app.ErrUnauthenticated
+	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, data FROM tournaments
+		WHERE user_id = $1
 		ORDER BY tournament_date DESC, id DESC
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
+		LIMIT $2 OFFSET $3
+	`, ownerID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list tournaments: %w", err)
 	}
@@ -121,13 +131,16 @@ func (r *TournamentRepository) List(ctx context.Context, limit, offset int) ([]*
 	return tournaments, nil
 }
 
-func (r *TournamentRepository) Update(ctx context.Context, tournament *domain.Tournament) error {
-	return updateTournament(ctx, r.pool, tournament)
+func (r *TournamentRepository) Update(ctx context.Context, ownerID uuid.UUID, tournament *domain.Tournament) error {
+	return updateTournament(ctx, r.pool, ownerID, tournament)
 }
 
 func updateTournament(ctx context.Context, db interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-}, tournament *domain.Tournament) error {
+}, ownerID uuid.UUID, tournament *domain.Tournament) error {
+	if ownerID == uuid.Nil {
+		return app.ErrUnauthenticated
+	}
 	if tournament == nil {
 		return errNilTournament
 	}
@@ -146,10 +159,10 @@ func updateTournament(ctx context.Context, db interface {
 		    tournament_date = $2,
 		    data = $3,
 		    updated_at = NOW()
-		WHERE id = $4
+		WHERE id = $4 AND user_id = $5
 	`
 
-	result, execErr := db.Exec(ctx, sqlQuery, tournament.Name, tournament.Date, data, tournament.ID)
+	result, execErr := db.Exec(ctx, sqlQuery, tournament.Name, tournament.Date, data, tournament.ID, ownerID)
 	if execErr != nil {
 		return fmt.Errorf("update tournament: %w", execErr)
 	}
@@ -160,17 +173,20 @@ func updateTournament(ctx context.Context, db interface {
 	return nil
 }
 
-func (r *TournamentRepository) Delete(ctx context.Context, id uuid.UUID) error {
+func (r *TournamentRepository) Delete(ctx context.Context, ownerID, id uuid.UUID) error {
+	if ownerID == uuid.Nil {
+		return app.ErrUnauthenticated
+	}
 	if id == uuid.Nil {
 		return app.ErrInvalidTournamentID
 	}
 
 	sqlQuery := `
 	DELETE FROM tournaments
-	WHERE id = $1
+	WHERE id = $1 AND user_id = $2
 	`
 
-	result, err := r.pool.Exec(ctx, sqlQuery, id)
+	result, err := r.pool.Exec(ctx, sqlQuery, id, ownerID)
 	if err != nil {
 		return fmt.Errorf("delete tournament: %w", err)
 	}

@@ -33,7 +33,7 @@ type playerPatchHTTPFixture struct {
 func newPlayerPatchHTTPFixture(t *testing.T, mode domain.SettlementMode) *playerPatchHTTPFixture {
 	t.Helper()
 	repo := &memoryTournamentRepository{cards: make(map[uuid.UUID][]byte)}
-	f := &playerPatchHTTPFixture{repo: repo, router: NewRouter(NewTournamentHandler(service.NewTournamentService(repo)))}
+	f := &playerPatchHTTPFixture{repo: repo, router: newTournamentTestRouter(NewTournamentHandler(service.NewTournamentService(repo)))}
 	settings := settingsRequestFixture()
 	settings.SettlementMode = string(mode)
 	settings.ChipSet = []ChipRequest{{Value: 25, Count: 80}, {Value: 100, Count: 80}}
@@ -44,7 +44,7 @@ func newPlayerPatchHTTPFixture(t *testing.T, mode domain.SettlementMode) *player
 	create := f.request(t, http.MethodPost, "/tournaments", string(payload), http.StatusCreated)
 	var created CreateTournamentResponse
 	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &created))
-	f.tournament, err = repo.GetByID(context.Background(), uuid.MustParse(created.ID))
+	f.tournament, err = repo.GetByID(context.Background(), testUserID, uuid.MustParse(created.ID))
 	require.NoError(t, err)
 	f.path = "/tournaments/" + created.ID + "/players/" + f.tournament.Players[0].ID.String()
 	other := f.request(t, http.MethodPost, "/tournaments", validCreateTournamentJSON(), http.StatusCreated)
@@ -65,7 +65,7 @@ func (f *playerPatchHTTPFixture) request(t *testing.T, method, path, body string
 func (f *playerPatchHTTPFixture) patch(t *testing.T, body string) TournamentResponse {
 	t.Helper()
 	rec := f.request(t, http.MethodPatch, f.path, body, http.StatusOK)
-	saved, err := f.repo.GetByID(context.Background(), f.tournament.ID)
+	saved, err := f.repo.GetByID(context.Background(), testUserID, f.tournament.ID)
 	require.NoError(t, err)
 	assert.Equal(t, f.tournament, saved)
 	expected, err := newTournamentResponse(f.tournament)
@@ -101,7 +101,7 @@ func TestTournamentHTTPPlayerPatchRejectsMissingRebuyPaymentWithoutMutation(t *t
 			assert.True(t, bytes.Equal(before, f.repo.cards[f.tournament.ID]), "tournament snapshot changed")
 			assert.Equal(t, f.otherSnapshot, f.repo.cards[f.otherID])
 			assert.Len(t, f.repo.cards, 2)
-			saved, err := f.repo.GetByID(context.Background(), f.tournament.ID)
+			saved, err := f.repo.GetByID(context.Background(), testUserID, f.tournament.ID)
 			require.NoError(t, err)
 			require.Len(t, saved.Players[1].Rebuys, 1)
 			assert.True(t, saved.Players[1].Rebuys[0].Paid, "existing rebuy payment was cleared")
@@ -169,7 +169,7 @@ func TestTournamentHTTPPlayerPatchTargetsSecondPlayer(t *testing.T) {
 
 func TestTournamentHTTPPlayerPatchIDsAndMissingTarget(t *testing.T) {
 	f := newPlayerPatchHTTPFixture(t, domain.SettlementBank)
-	other, err := f.repo.GetByID(context.Background(), f.otherID)
+	other, err := f.repo.GetByID(context.Background(), testUserID, f.otherID)
 	require.NoError(t, err)
 	tournamentPath := "/tournaments/" + f.tournament.ID.String() + "/players/"
 	tests := []struct {
@@ -218,7 +218,7 @@ func TestTournamentHTTPPlayerPatchRejectsDuplicateRebuysWithoutMutation(t *testi
 
 func TestTournamentHTTPPlayerPatchRejectsPotOverflowWithoutMutation(t *testing.T) {
 	repo := &memoryTournamentRepository{cards: make(map[uuid.UUID][]byte)}
-	router := NewRouter(NewTournamentHandler(service.NewTournamentService(repo)))
+	router := newTournamentTestRouter(NewTournamentHandler(service.NewTournamentService(repo)))
 	payload := strings.Replace(validCreateTournamentJSON(), `"buy_in_amount":1000`, fmt.Sprintf(`"buy_in_amount":%d`, int64(math.MaxInt64/2)), 1)
 	create := httptest.NewRecorder()
 	router.ServeHTTP(create, httptest.NewRequest(http.MethodPost, "/tournaments", strings.NewReader(payload)))
@@ -226,7 +226,7 @@ func TestTournamentHTTPPlayerPatchRejectsPotOverflowWithoutMutation(t *testing.T
 	var created CreateTournamentResponse
 	require.NoError(t, json.Unmarshal(create.Body.Bytes(), &created))
 	id := uuid.MustParse(created.ID)
-	tr, err := repo.GetByID(context.Background(), id)
+	tr, err := repo.GetByID(context.Background(), testUserID, id)
 	require.NoError(t, err)
 	before := append([]byte(nil), repo.cards[id]...)
 	path := "/tournaments/" + created.ID + "/players/" + tr.Players[0].ID.String()
@@ -266,7 +266,7 @@ func TestTournamentHTTPPlayerPatchPreservesResultsAndRejectsPrizeMismatch(t *tes
 	payload, err = json.Marshal(req)
 	require.NoError(t, err)
 	f.request(t, http.MethodPut, "/tournaments/"+f.tournament.ID.String(), string(payload), http.StatusOK)
-	f.tournament, err = f.repo.GetByID(context.Background(), f.tournament.ID)
+	f.tournament, err = f.repo.GetByID(context.Background(), testUserID, f.tournament.ID)
 	require.NoError(t, err)
 	f.tournament.Players[0].BuyInPaid = false
 	paid := f.patch(t, `{"buy_in_paid":false}`)

@@ -97,7 +97,7 @@ func handlerTournamentFixture() *domain.Tournament {
 func serve(t *testing.T, srv *mockTournamentService, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	NewRouter(NewTournamentHandler(srv)).ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+	newTournamentTestRouter(NewTournamentHandler(srv)).ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
 	return rec
 }
 
