@@ -4,7 +4,7 @@ import "errors"
 
 var ErrEmptyName = errors.New("tournament name must not be empty")
 var ErrNotEnoughPlayers = errors.New("must be at least two players")
-var ErrDuplicatePlayer = errors.New("names must not be duplicated")
+var ErrDuplicatePlayer = errors.New("participant IDs must not be duplicated")
 var ErrIncorrectBuyInAmount = errors.New("buy in cant be negative")
 var ErrEmptyChipSet = errors.New("must be at least one chip denomination")
 var ErrIncorrectChipSet = errors.New("chip denominations must have positive value and count")

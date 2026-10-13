@@ -40,7 +40,7 @@ func TestConfiguredRateLimitsThroughRouter(t *testing.T) {
 			now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 			h := NewAuthHandler(&fakeAuthService{}, CookieOptions{}, safety)
 			h.now = func() time.Time { return now }
-			router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h)
+			router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{}))
 			for range tc.burst {
 				require.Equal(t, tc.status, safetyRequest(router, tc.method, tc.path, "192.0.2.1:10").Code)
 			}
@@ -62,7 +62,7 @@ func TestConfiguredGeneralLimitIsSharedAcrossRoutes(t *testing.T) {
 	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 	h := NewAuthHandler(&fakeAuthService{}, CookieOptions{}, safety)
 	h.now = func() time.Time { return now }
-	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h)
+	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{}))
 	require.Equal(t, http.StatusOK, safetyRequest(router, http.MethodPost, "/auth/login", "192.0.2.1:10").Code)
 	rejected := safetyRequest(router, http.MethodGet, "/auth/me", "192.0.2.1:20")
 	assert.Equal(t, http.StatusTooManyRequests, rejected.Code)
@@ -78,7 +78,7 @@ func TestConfiguredLimiterCleanupTiming(t *testing.T) {
 	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 	h := NewAuthHandler(&fakeAuthService{}, CookieOptions{}, safety)
 	h.now = func() time.Time { return now }
-	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h)
+	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{}))
 	require.Equal(t, http.StatusOK, safetyRequest(router, http.MethodGet, "/auth/me", "192.0.2.1:10").Code)
 	now = now.Add(2 * time.Second)
 	rejected := safetyRequest(router, http.MethodGet, "/auth/me", "192.0.2.2:10")
@@ -109,7 +109,7 @@ func TestConfiguredAuthConcurrency(t *testing.T) {
 	}}
 	h := NewAuthHandler(s, CookieOptions{}, safety)
 	require.Equal(t, 3, cap(h.safety.hashing))
-	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h)
+	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{}))
 	results := make(chan *httptest.ResponseRecorder, 3)
 	for i := range 3 {
 		wg.Add(1)

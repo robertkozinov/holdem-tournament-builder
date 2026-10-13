@@ -8,9 +8,12 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func NewRouter(handler *TournamentHandler, auth *AuthHandler) http.Handler {
+func NewRouter(handler *TournamentHandler, auth *AuthHandler, players *PlayerHandler) http.Handler {
 	if auth == nil || auth.service == nil {
 		panic("auth handler is required")
+	}
+	if players == nil || players.service == nil {
+		panic("player handler is required")
 	}
 	r := chi.NewRouter()
 
@@ -29,6 +32,10 @@ func NewRouter(handler *TournamentHandler, auth *AuthHandler) http.Handler {
 	authRoutes.With(auth.authenticate).Get("/auth/me", auth.Me)
 
 	protected := r.With(noStore, origin.Handler, auth.safety.rateLimit(generalRate), auth.authenticate)
+	protected.Post("/players", players.CreatePlayer)
+	protected.Get("/players", players.ListPlayers)
+	protected.Patch("/players/{player_id}", players.RenamePlayer)
+	protected.Delete("/players/{player_id}", players.DeletePlayer)
 	protected.Post("/tournaments", handler.CreateTournament)
 	protected.Get("/tournaments", handler.ListTournaments)
 	protected.Get("/tournaments/{id}", handler.GetTournamentByID)

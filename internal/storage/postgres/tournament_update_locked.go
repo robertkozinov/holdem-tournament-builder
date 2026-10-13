@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"holdem-tournament-builder/internal/app"
 	"holdem-tournament-builder/internal/domain"
@@ -25,12 +24,7 @@ func (r *TournamentRepository) UpdateLocked(ctx context.Context, ownerID, id uui
 	if err != nil {
 		return nil, fmt.Errorf("begin tournament update: %w", err)
 	}
-	defer func() {
-		// A cancelled request must not prevent releasing the transaction and its lock.
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		_ = tx.Rollback(cleanupCtx)
-	}()
+	defer rollbackTournamentTx(ctx, tx)
 
 	original, err := scanTournament(tx.QueryRow(ctx, `
 		SELECT data FROM tournaments
@@ -40,6 +34,15 @@ func (r *TournamentRepository) UpdateLocked(ctx context.Context, ownerID, id uui
 	if err != nil {
 		return nil, fmt.Errorf("lock tournament: %w", err)
 	}
+	ids := tournamentPlayerIDs([]*domain.Tournament{original})
+	profiles, err := loadTournamentProfiles(ctx, tx, ownerID, ids, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := hydrateTournamentPlayers([]*domain.Tournament{original}, profiles); err != nil {
+		return nil, err
+	}
+	buyIn := original.BuyInAmount
 	updated, err := change(original)
 	if err != nil {
 		return nil, err
@@ -50,7 +53,23 @@ func (r *TournamentRepository) UpdateLocked(ctx context.Context, ownerID, id uui
 	if updated.ID != id {
 		return nil, fmt.Errorf("changed tournament id does not match locked row")
 	}
+	updatedIDs := tournamentPlayerIDs([]*domain.Tournament{updated})
+	if len(updatedIDs) != len(ids) {
+		return nil, fmt.Errorf("locked update cannot change tournament players")
+	}
+	for i := range ids {
+		if ids[i] != updatedIDs[i] {
+			return nil, fmt.Errorf("locked update cannot change tournament players")
+		}
+	}
+	updated.BuyInAmount = buyIn
+	if err := hydrateTournamentPlayers([]*domain.Tournament{updated}, profiles); err != nil {
+		return nil, err
+	}
 	if err := updateTournament(ctx, tx, ownerID, updated); err != nil {
+		return nil, err
+	}
+	if err := syncTournamentPlayers(ctx, tx, ownerID, updated); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {

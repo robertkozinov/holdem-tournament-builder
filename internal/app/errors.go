@@ -14,4 +14,7 @@ var (
 	ErrSessionUnavailable  = errors.New("session storage unavailable")
 	ErrInvalidLogin        = errors.New("invalid login")
 	ErrInvalidPassword     = errors.New("invalid password")
+	ErrInvalidPlayerID     = errors.New("invalid player id")
+	ErrPlayerNotFound      = errors.New("player not found")
+	ErrPlayerNameTaken     = errors.New("player name is already taken")
 )

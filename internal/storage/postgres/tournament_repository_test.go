@@ -41,7 +41,7 @@ func setupTournamentRepositoryTest(t *testing.T) (context.Context, *pgxpool.Pool
 	require.NoError(t, err)
 	defer conn.Release()
 	require.NoError(t, verifyTournamentTestDatabase(ctx, config.ConnConfig.Database, conn))
-	_, err = conn.Exec(ctx, "TRUNCATE TABLE tournaments")
+	_, err = conn.Exec(ctx, "TRUNCATE TABLE tournament_players, tournaments, players")
 	require.NoError(t, err)
 	_, err = conn.Exec(ctx, "INSERT INTO users (id, login, password_hash, created_at) VALUES ($1, 'test-owner', 'test-hash', NOW()) ON CONFLICT (id) DO NOTHING", testOwnerID)
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestTournamentRepository_Create(t *testing.T) {
 	t.Run("creates tournament", func(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, testOwnerID, tr)
+		id, err := createRegisteredTournament(t, ctx, repo, tr)
 		require.NoError(t, err)
 		assert.NotEqual(t, uuid.Nil, id)
 		assert.Equal(t, id, tr.ID)
@@ -114,12 +114,12 @@ func TestTournamentRepository_Create(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
 		first := validTournament(t)
 		first.ID = uuid.New()
-		createdID, err := repo.Create(ctx, testOwnerID, first)
+		createdID, err := createRegisteredTournament(t, ctx, repo, first)
 		require.NoError(t, err)
 		assert.Equal(t, first.ID, createdID)
 		second := validTournament(t)
 		second.ID = first.ID
-		id, err := repo.Create(ctx, testOwnerID, second)
+		id, err := createRegisteredTournament(t, ctx, repo, second)
 		var pgErr *pgconn.PgError
 		require.ErrorAs(t, err, &pgErr)
 		assert.Equal(t, "23505", pgErr.Code)
@@ -131,10 +131,14 @@ func TestTournamentRepository_Create(t *testing.T) {
 			assert.Equal(t, "INSERT INTO tournaments (id, name, tournament_date, data, user_id) VALUES ($1, $2, $3, $4, $5)", compactSQL(query))
 			require.Len(t, args, 5)
 			assert.Equal(t, testOwnerID, args[4])
-			assert.Equal(t, []any{tr.ID, tr.Name, tr.Date}, args[:3])
-			assertStoredTournament(t, tr, args[3].([]byte))
+			assert.NotEqual(t, uuid.Nil, args[0])
+			assert.Equal(t, []any{tr.Name, tr.Date}, args[1:3])
+			expected := *tr
+			expected.ID = args[0].(uuid.UUID)
+			assertStoredTournament(t, &expected, args[3].([]byte))
 			return pgconn.NewCommandTag("INSERT 0 1"), nil
 		}}
+		attachTournamentRegistry(t, db, tr)
 		id, err := (&TournamentRepository{pool: db}).Create(context.Background(), testOwnerID, tr)
 		require.NoError(t, err)
 		assert.NotEqual(t, uuid.Nil, id)
@@ -146,7 +150,7 @@ func TestTournamentRepository_GetByID(t *testing.T) {
 	t.Run("gets complete tournament", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, testOwnerID, tr)
+		id, err := createRegisteredTournament(t, ctx, repo, tr)
 		require.NoError(t, err)
 		got, err := repo.GetByID(ctx, testOwnerID, id)
 		require.NoError(t, err)
@@ -174,6 +178,7 @@ func TestTournamentRepository_GetByID(t *testing.T) {
 			assert.Equal(t, []any{id, testOwnerID}, args)
 			return tournamentRowFunc(func(dest ...any) error { *(dest[0].(*[]byte)) = data; return nil })
 		}}
+		attachTournamentRegistry(t, db, tr)
 		got, err := (&TournamentRepository{pool: db}).GetByID(context.Background(), testOwnerID, id)
 		require.NoError(t, err)
 		tr.ID = id
@@ -194,7 +199,7 @@ func TestTournamentRepository_Update(t *testing.T) {
 	t.Run("replaces complete tournament card", func(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, testOwnerID, tr)
+		id, err := createRegisteredTournament(t, ctx, repo, tr)
 		require.NoError(t, err)
 		tr.Name = "Saturday Game"
 		tr.Date = tr.Date.AddDate(0, 0, 1)
@@ -209,7 +214,10 @@ func TestTournamentRepository_Update(t *testing.T) {
 		tr.Players[0].BuyInPaid = true
 		tr.Players[0].Rebuys[1].Paid = true
 		tr.Players[1].Rebuys = []domain.Rebuy{}
-		tr.Players = append(tr.Players, domain.TournamentPlayer{ID: uuid.New(), Name: "C", Rebuys: []domain.Rebuy{}})
+		newID := uuid.New()
+		_, err = pool.Exec(ctx, `INSERT INTO players(id,user_id,name,normalized_name,created_at,updated_at) VALUES($1,$2,'C','c',NOW(),NOW())`, newID, testOwnerID)
+		require.NoError(t, err)
+		tr.Players = append(tr.Players, domain.TournamentPlayer{ID: newID, Name: "C", Rebuys: []domain.Rebuy{}})
 		tr.Results = []domain.Result{{PlayerID: tr.Players[1].ID, Place: nil, Prize: 5000}}
 		for i := 0; i < 2; i++ {
 			require.NoError(t, repo.Update(ctx, testOwnerID, tr))
@@ -257,6 +265,7 @@ func TestTournamentRepository_Update(t *testing.T) {
 			assert.Equal(t, tr.ID, args[3])
 			return pgconn.NewCommandTag("UPDATE 1"), nil
 		}}
+		attachTournamentRegistry(t, db, tr)
 		require.NoError(t, (&TournamentRepository{pool: db}).Update(context.Background(), testOwnerID, tr))
 	})
 }
@@ -264,7 +273,7 @@ func TestTournamentRepository_Update(t *testing.T) {
 func TestTournamentRepository_Delete(t *testing.T) {
 	t.Run("deletes tournament", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
-		id, err := repo.Create(ctx, testOwnerID, validTournament(t))
+		id, err := createRegisteredTournament(t, ctx, repo, validTournament(t))
 		require.NoError(t, err)
 		require.NoError(t, repo.Delete(ctx, testOwnerID, id))
 		got, err := repo.GetByID(ctx, testOwnerID, id)
@@ -308,6 +317,7 @@ func TestTournamentRepository_WrapsDatabaseErrors(t *testing.T) {
 	repo := &TournamentRepository{pool: db}
 	tr := validTournament(t)
 	tr.ID = uuid.New()
+	attachTournamentRegistry(t, db, tr)
 	id, err := repo.Create(context.Background(), testOwnerID, tr)
 	require.ErrorIs(t, err, cause)
 	assert.Equal(t, uuid.Nil, id)
@@ -353,6 +363,7 @@ func TestTournamentRepository_List(t *testing.T) {
 		ids := []uuid.UUID{uuid.New(), uuid.New()}
 		rows := &stubTournamentRows{index: -1, records: []storedTournamentRow{{ids[0], firstData}, {ids[1], secondData}}}
 		db := &stubTournamentDB{query: func(context.Context, string, ...any) (pgx.Rows, error) { return rows, nil }}
+		attachTournamentRegistry(t, db, first, second)
 		got, err := (&TournamentRepository{pool: db}).List(context.Background(), testOwnerID, 2, 0)
 		require.NoError(t, err)
 		first.ID, second.ID = ids[0], ids[1]
@@ -370,7 +381,7 @@ func TestTournamentRepository_List(t *testing.T) {
 		cards[2].Date = cards[1].Date
 		cards[3].Date = cards[3].Date.AddDate(0, 0, -1)
 		for _, index := range []int{1, 3, 0, 2} {
-			_, err := repo.Create(ctx, testOwnerID, cards[index])
+			_, err := createRegisteredTournament(t, ctx, repo, cards[index])
 			require.NoError(t, err)
 		}
 		ordered := []*domain.Tournament{cards[2], cards[1], cards[0], cards[3]}
@@ -507,6 +518,9 @@ func (db *stubTournamentDB) QueryRow(ctx context.Context, query string, args ...
 	return db.queryRow(ctx, query, args...)
 }
 func (db *stubTournamentDB) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
+	if db.beginTx == nil {
+		return &stubTournamentTx{exec: db.Exec, query: db.Query, queryRow: db.QueryRow, commit: func(context.Context) error { return nil }, rollback: func(context.Context) error { return pgx.ErrTxClosed }}, nil
+	}
 	return db.beginTx(ctx, options)
 }
 

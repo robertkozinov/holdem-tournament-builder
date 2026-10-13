@@ -57,7 +57,7 @@ func TestTournamentRepository_OwnerIsolationIntegration(t *testing.T) {
 	other := domain.User{ID: uuid.New(), Login: "other-" + uuid.New().String()[:16], PasswordHash: "test-hash", CreatedAt: time.Now().UTC()}
 	require.NoError(t, NewUserRepository(pool).Create(ctx, other))
 	card := validTournament(t)
-	id, err := repo.Create(ctx, testOwnerID, card)
+	id, err := createRegisteredTournament(t, ctx, repo, card)
 	require.NoError(t, err)
 	_, err = repo.GetByID(ctx, other.ID, id)
 	require.ErrorIs(t, err, app.ErrTournamentNotFound)

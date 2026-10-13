@@ -9,48 +9,49 @@ import (
 )
 
 func TestMinimizeTransfers(t *testing.T) {
+	a, b, c, d := uuid.MustParse("00000000-0000-0000-0000-000000000001"), uuid.MustParse("00000000-0000-0000-0000-000000000002"), uuid.MustParse("00000000-0000-0000-0000-000000000003"), uuid.MustParse("00000000-0000-0000-0000-000000000004")
 	tests := []struct {
 		name     string
-		balances map[string]int64
+		balances map[uuid.UUID]int64
 		want     []Transfer
 	}{
 		{
 			name:     "winner takes all",
-			balances: map[string]int64{"A": 3000, "B": -1000, "C": -1000, "D": -1000},
+			balances: map[uuid.UUID]int64{a: 3000, b: -1000, c: -1000, d: -1000},
 			want: []Transfer{
-				{From: "B", To: "A", Amount: 1000},
-				{From: "C", To: "A", Amount: 1000},
-				{From: "D", To: "A", Amount: 1000},
+				{From: b, To: a, Amount: 1000},
+				{From: c, To: a, Amount: 1000},
+				{From: d, To: a, Amount: 1000},
 			},
 		},
 		{
 			name:     "1 debtor 2 creditors",
-			balances: map[string]int64{"A": 1000, "B": 1000, "C": -2000},
+			balances: map[uuid.UUID]int64{a: 1000, b: 1000, c: -2000},
 			want: []Transfer{
-				{From: "C", To: "A", Amount: 1000},
-				{From: "C", To: "B", Amount: 1000},
+				{From: c, To: a, Amount: 1000},
+				{From: c, To: b, Amount: 1000},
 			},
 		},
 		{
 			name:     "mixed with 2 pointers",
-			balances: map[string]int64{"A": 2000, "B": 1000, "C": -1500, "D": -1500},
+			balances: map[uuid.UUID]int64{a: 2000, b: 1000, c: -1500, d: -1500},
 			want: []Transfer{
-				{From: "C", To: "A", Amount: 1500},
-				{From: "D", To: "A", Amount: 500},
-				{From: "D", To: "B", Amount: 1000},
+				{From: c, To: a, Amount: 1500},
+				{From: d, To: a, Amount: 500},
+				{From: d, To: b, Amount: 1000},
 			},
 		},
 		{
 			name:     "skip zero balance",
-			balances: map[string]int64{"A": 2000, "B": 0, "C": -1000, "D": -1000},
+			balances: map[uuid.UUID]int64{a: 2000, b: 0, c: -1000, d: -1000},
 			want: []Transfer{
-				{From: "C", To: "A", Amount: 1000},
-				{From: "D", To: "A", Amount: 1000},
+				{From: c, To: a, Amount: 1000},
+				{From: d, To: a, Amount: 1000},
 			},
 		},
 		{
 			name:     "empty",
-			balances: map[string]int64{},
+			balances: map[uuid.UUID]int64{},
 			want:     nil,
 		},
 	}
@@ -70,7 +71,7 @@ func TestCalculateTransfers(t *testing.T) {
 	input.Results = []Result{{PlayerID: input.Players[0].ID, Place: &p1, Prize: 4000}, {PlayerID: input.Players[1].ID, Place: &p2, Prize: 1000}}
 	tr, err := NewTournament(input)
 	require.NoError(t, err)
-	assert.Equal(t, []Transfer{{From: "B", To: "A", Amount: 1000}, {From: "C", To: "A", Amount: 1000}, {From: "D", To: "A", Amount: 1000}}, tr.CalculateTransfers())
+	assert.ElementsMatch(t, []Transfer{{From: input.Players[1].ID, To: input.Players[0].ID, Amount: 1000}, {From: input.Players[2].ID, To: input.Players[0].ID, Amount: 1000}, {From: input.Players[3].ID, To: input.Players[0].ID, Amount: 1000}}, tr.CalculateTransfers())
 	t.Run("bank has no transfers", func(t *testing.T) {
 		tr, err := NewTournament(input)
 		require.NoError(t, err)
@@ -96,4 +97,16 @@ func TestCalculateTransfers(t *testing.T) {
 			assert.Zero(t, amount)
 		}
 	})
+}
+
+func TestCalculateTransfersKeepsSameNamePlayersIndependent(t *testing.T) {
+	input := tournamentFixture()
+	input.Players = input.Players[:2]
+	input.Players[1].Name = input.Players[0].Name
+	input.Results = []Result{{PlayerID: input.Players[0].ID, Prize: 2000}}
+	transfers := input.CalculateTransfers()
+	require.Len(t, transfers, 1)
+	assert.Equal(t, input.Players[1].ID, transfers[0].From)
+	assert.Equal(t, input.Players[0].ID, transfers[0].To)
+	assert.Equal(t, int64(1000), transfers[0].Amount)
 }

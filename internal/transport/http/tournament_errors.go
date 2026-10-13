@@ -15,6 +15,12 @@ func handleServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, app.ErrUnauthenticated):
 		response.WriteError(w, http.StatusUnauthorized, "authentication required")
+	case errors.Is(err, app.ErrPlayerNameTaken):
+		response.WriteError(w, http.StatusConflict, "player name is already taken")
+	case errors.Is(err, app.ErrPlayerNotFound):
+		response.WriteError(w, http.StatusNotFound, "player not found")
+	case errors.Is(err, app.ErrInvalidPlayerID):
+		response.WriteError(w, http.StatusBadRequest, "invalid player id")
 	case errors.Is(err, app.ErrValidation):
 		response.WriteError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, app.ErrInvalidTournamentID):

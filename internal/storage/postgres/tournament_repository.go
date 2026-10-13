@@ -36,26 +36,24 @@ func (r *TournamentRepository) Create(ctx context.Context, ownerID uuid.UUID, to
 	if tournament == nil {
 		return uuid.Nil, errNilTournament
 	}
-	if tournament.ID == uuid.Nil {
-		tournament.ID = uuid.New()
+	id := tournament.ID
+	if id == uuid.Nil {
+		id = uuid.New()
 	}
-
-	data, err := json.Marshal(tournament)
+	card, err := r.saveWithPlayers(ctx, ownerID, id, true, tournament.Players, func(resolved []domain.TournamentPlayer, _ *domain.Tournament) (*domain.Tournament, error) {
+		candidate := *tournament
+		candidate.ID, candidate.Players = id, resolved
+		card, err := domain.NewTournament(candidate)
+		if err != nil {
+			return nil, errors.Join(app.ErrValidation, err)
+		}
+		return card, nil
+	})
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("marshal tournament: %w", err)
+		return uuid.Nil, err
 	}
-
-	createQuery := `
-	INSERT INTO tournaments (id, name, tournament_date, data, user_id)
-	VALUES ($1, $2, $3, $4, $5)
-	`
-
-	_, err = r.pool.Exec(ctx, createQuery, tournament.ID, tournament.Name, tournament.Date, data, ownerID)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("insert tournament: %w", err)
-	}
-
-	return tournament.ID, nil
+	*tournament = *card
+	return card.ID, nil
 }
 
 func (r *TournamentRepository) GetByID(ctx context.Context, ownerID, id uuid.UUID) (*domain.Tournament, error) {
@@ -71,7 +69,19 @@ func (r *TournamentRepository) GetByID(ctx context.Context, ownerID, id uuid.UUI
 		WHERE id = $1 AND user_id = $2
 	`
 
-	return scanTournament(r.pool.QueryRow(ctx, sqlQuery, id, ownerID), id)
+	card, err := scanTournament(r.pool.QueryRow(ctx, sqlQuery, id, ownerID), id)
+	if err != nil {
+		return nil, err
+	}
+	cards := []*domain.Tournament{card}
+	profiles, err := loadTournamentProfiles(ctx, r.pool, ownerID, tournamentPlayerIDs(cards), false)
+	if err != nil {
+		return nil, err
+	}
+	if err := hydrateTournamentPlayers(cards, profiles); err != nil {
+		return nil, err
+	}
+	return card, nil
 }
 
 func scanTournament(row pgx.Row, id uuid.UUID) (*domain.Tournament, error) {
@@ -128,11 +138,41 @@ func (r *TournamentRepository) List(ctx context.Context, ownerID uuid.UUID, limi
 		return nil, fmt.Errorf("iterate tournaments: %w", err)
 	}
 
+	rows.Close()
+	profiles, err := loadTournamentProfiles(ctx, r.pool, ownerID, tournamentPlayerIDs(tournaments), false)
+	if err != nil {
+		return nil, err
+	}
+	if err := hydrateTournamentPlayers(tournaments, profiles); err != nil {
+		return nil, err
+	}
 	return tournaments, nil
 }
 
 func (r *TournamentRepository) Update(ctx context.Context, ownerID uuid.UUID, tournament *domain.Tournament) error {
-	return updateTournament(ctx, r.pool, ownerID, tournament)
+	if ownerID == uuid.Nil {
+		return app.ErrUnauthenticated
+	}
+	if tournament == nil {
+		return errNilTournament
+	}
+	if tournament.ID == uuid.Nil {
+		return app.ErrInvalidTournamentID
+	}
+	card, err := r.saveWithPlayers(ctx, ownerID, tournament.ID, false, tournament.Players, func(resolved []domain.TournamentPlayer, original *domain.Tournament) (*domain.Tournament, error) {
+		candidate := *tournament
+		candidate.Players, candidate.BuyInAmount = resolved, original.BuyInAmount
+		card, err := domain.NewTournament(candidate)
+		if err != nil {
+			return nil, errors.Join(app.ErrValidation, err)
+		}
+		return card, nil
+	})
+	if err != nil {
+		return err
+	}
+	*tournament = *card
+	return nil
 }
 
 func updateTournament(ctx context.Context, db interface {

@@ -24,6 +24,7 @@ type Rebuy struct {
 type TournamentPlayer struct {
 	ID        uuid.UUID
 	Name      string
+	IsDeleted bool
 	BuyInPaid bool
 	Rebuys    []Rebuy
 }
@@ -77,7 +78,6 @@ func NewTournament(input Tournament) (*Tournament, error) {
 	if input.SettlementMode != SettlementBank && input.SettlementMode != SettlementP2P {
 		return nil, ErrInvalidSettlementMode
 	}
-	names := make(map[string]bool, len(input.Players))
 	ids := make(map[uuid.UUID]bool, len(input.Players))
 	rebuys := make(map[uuid.UUID]bool)
 	var entries int64
@@ -89,10 +89,9 @@ func NewTournament(input Tournament) (*Tournament, error) {
 		if player.ID == uuid.Nil {
 			return nil, ErrInvalidPlayerID
 		}
-		if names[name] || ids[player.ID] {
+		if ids[player.ID] {
 			return nil, ErrDuplicatePlayer
 		}
-		names[name] = true
 		ids[player.ID] = true
 		if int64(len(player.Rebuys)) >= math.MaxInt64-entries {
 			return nil, ErrPotOverflow

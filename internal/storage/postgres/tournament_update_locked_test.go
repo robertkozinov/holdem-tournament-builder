@@ -51,6 +51,7 @@ func TestTournamentRepository_UpdateLocked(t *testing.T) {
 			return pgx.ErrTxClosed
 		},
 	}
+	attachTournamentTxRegistry(tx, tr)
 	db := &stubTournamentDB{beginTx: func(_ context.Context, options pgx.TxOptions) (pgx.Tx, error) {
 		events = append(events, "begin")
 		assert.Equal(t, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, options)
@@ -158,6 +159,7 @@ func TestTournamentRepository_UpdateLockedErrors(t *testing.T) {
 					return nil
 				},
 			}
+			attachTournamentTxRegistry(tx, tr)
 			db := &stubTournamentDB{beginTx: func(context.Context, pgx.TxOptions) (pgx.Tx, error) {
 				events = append(events, "begin")
 				if tc.stage == "begin" {
@@ -217,6 +219,7 @@ func TestTournamentRepository_UpdateLockedErrors(t *testing.T) {
 type stubTournamentTx struct {
 	pgx.Tx
 	queryRow func(context.Context, string, ...any) pgx.Row
+	query    func(context.Context, string, ...any) (pgx.Rows, error)
 	exec     func(context.Context, string, ...any) (pgconn.CommandTag, error)
 	commit   func(context.Context) error
 	rollback func(context.Context) error
@@ -224,6 +227,10 @@ type stubTournamentTx struct {
 
 func (tx *stubTournamentTx) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
 	return tx.queryRow(ctx, query, args...)
+}
+
+func (tx *stubTournamentTx) Query(ctx context.Context, query string, args ...any) (pgx.Rows, error) {
+	return tx.query(ctx, query, args...)
 }
 
 func (tx *stubTournamentTx) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
