@@ -12,9 +12,8 @@ import (
 )
 
 type TournamentRepository interface {
-	Create(ctx context.Context, ownerID uuid.UUID, tournament *domain.Tournament) (uuid.UUID, error)
+	SaveWithPlayers(ctx context.Context, ownerID, id uuid.UUID, selections []domain.TournamentPlayer, build func([]domain.TournamentPlayer, *domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error)
 	GetByID(ctx context.Context, ownerID, id uuid.UUID) (*domain.Tournament, error)
-	Update(ctx context.Context, ownerID uuid.UUID, tournament *domain.Tournament) error
 	UpdateLocked(ctx context.Context, ownerID, id uuid.UUID, change func(*domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error)
 	Delete(ctx context.Context, ownerID, id uuid.UUID) error
 	List(ctx context.Context, ownerID uuid.UUID, limit, offset int) ([]*domain.Tournament, error)
@@ -32,15 +31,14 @@ func (s *TournamentService) CreateTournament(ctx context.Context, input CreateTo
 		return uuid.Nil, err
 	}
 	editable := SaveTournamentInput{Name: input.Name, Date: input.Date, Players: input.Players, SettlementMode: input.SettlementMode, ChipSet: input.ChipSet, Style: input.Style, Duration: input.Duration, LevelDuration: input.LevelDuration}
-	tr, err := buildTournament(editable, input.BuyInAmount, true)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	id, err := s.repo.Create(ctx, ownerID, tr)
+	tr, err := s.repo.SaveWithPlayers(ctx, ownerID, uuid.Nil, input.Players, func(resolved []domain.TournamentPlayer, _ *domain.Tournament) (*domain.Tournament, error) {
+		editable.Players = resolved
+		return buildTournament(editable, input.BuyInAmount, true)
+	})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create tournament: %w", err)
 	}
-	return id, nil
+	return tr.ID, nil
 }
 
 func (s *TournamentService) SaveTournament(ctx context.Context, id uuid.UUID, input SaveTournamentInput) (*domain.Tournament, error) {
@@ -48,17 +46,19 @@ func (s *TournamentService) SaveTournament(ctx context.Context, id uuid.UUID, in
 	if err != nil {
 		return nil, err
 	}
-	original, err := s.GetTournamentByID(ctx, id)
-	if err != nil {
-		return nil, err
+	if id == uuid.Nil {
+		return nil, app.ErrInvalidTournamentID
 	}
-	// A separate candidate leaves the loaded card intact on validation or storage failure.
-	candidate, err := buildTournament(input, original.BuyInAmount, false)
+	candidate, err := s.repo.SaveWithPlayers(ctx, ownerID, id, input.Players, func(resolved []domain.TournamentPlayer, original *domain.Tournament) (*domain.Tournament, error) {
+		input.Players = resolved
+		candidate, err := buildTournament(input, original.BuyInAmount, false)
+		if err != nil {
+			return nil, err
+		}
+		candidate.ID = id
+		return candidate, nil
+	})
 	if err != nil {
-		return nil, err
-	}
-	candidate.ID = id
-	if err := s.repo.Update(ctx, ownerID, candidate); err != nil {
 		return nil, fmt.Errorf("save tournament: %w", err)
 	}
 	return candidate, nil
@@ -68,9 +68,6 @@ func buildTournament(input SaveTournamentInput, buyIn int64, generateIDs bool) (
 	players := slices.Clone(input.Players)
 	for i := range players {
 		players[i].Name = strings.TrimSpace(players[i].Name)
-		if generateIDs && players[i].ID == uuid.Nil {
-			players[i].ID = uuid.New()
-		}
 		players[i].Rebuys = slices.Clone(players[i].Rebuys)
 		for j := range players[i].Rebuys {
 			if generateIDs && players[i].Rebuys[j].ID == uuid.Nil {

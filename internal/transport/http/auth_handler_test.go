@@ -34,7 +34,7 @@ func authRequest(router http.Handler, method, path, body string, cookies ...*htt
 func authRouter(s *fakeAuthService, secure bool) (*AuthHandler, http.Handler) {
 	h := NewAuthHandler(s, CookieOptions{Secure: secure}, config.DefaultRequestSafety())
 	h.now = func() time.Time { return time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC) }
-	return h, NewRouter(NewTournamentHandler(&mockTournamentService{}), h)
+	return h, NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{}))
 }
 
 func TestAuthEndpointsAndCookies(t *testing.T) {

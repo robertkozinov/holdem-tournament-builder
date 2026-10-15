@@ -57,7 +57,7 @@ func (s *fakeAuthService) CurrentUser(ctx context.Context, id uuid.UUID) (domain
 }
 
 func newTournamentTestRouter(tournament *TournamentHandler) http.Handler {
-	router := NewRouter(tournament, NewAuthHandler(&fakeAuthService{}, CookieOptions{}, config.DefaultRequestSafety()))
+	router := NewRouter(tournament, NewAuthHandler(&fakeAuthService{}, CookieOptions{}, config.DefaultRequestSafety()), NewPlayerHandler(&playerServiceStub{}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.AddCookie(&http.Cookie{Name: "holdem_session", Value: "test-session"})
 		router.ServeHTTP(w, r)

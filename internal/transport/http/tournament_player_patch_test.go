@@ -35,6 +35,9 @@ func newPlayerPatchHTTPFixture(t *testing.T, mode domain.SettlementMode) *player
 	repo := &memoryTournamentRepository{cards: make(map[uuid.UUID][]byte)}
 	f := &playerPatchHTTPFixture{repo: repo, router: newTournamentTestRouter(NewTournamentHandler(service.NewTournamentService(repo)))}
 	settings := settingsRequestFixture()
+	for i := range settings.Players {
+		settings.Players[i].ID = uuid.Nil
+	}
 	settings.SettlementMode = string(mode)
 	settings.ChipSet = []ChipRequest{{Value: 25, Count: 80}, {Value: 100, Count: 80}}
 	settings.Players[1].BuyInPaid = true
@@ -47,7 +50,7 @@ func newPlayerPatchHTTPFixture(t *testing.T, mode domain.SettlementMode) *player
 	f.tournament, err = repo.GetByID(context.Background(), testUserID, uuid.MustParse(created.ID))
 	require.NoError(t, err)
 	f.path = "/tournaments/" + created.ID + "/players/" + f.tournament.Players[0].ID.String()
-	other := f.request(t, http.MethodPost, "/tournaments", validCreateTournamentJSON(), http.StatusCreated)
+	other := f.request(t, http.MethodPost, "/tournaments", strings.ReplaceAll(strings.ReplaceAll(validCreateTournamentJSON(), `"name":"A"`, `"name":"C"`), `"name":"B"`, `"name":"D"`), http.StatusCreated)
 	require.NoError(t, json.Unmarshal(other.Body.Bytes(), &created))
 	f.otherID = uuid.MustParse(created.ID)
 	f.otherSnapshot = append([]byte(nil), repo.cards[f.otherID]...)

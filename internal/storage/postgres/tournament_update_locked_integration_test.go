@@ -27,7 +27,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
 		tr.Players[0].BuyInPaid, tr.Players[1].BuyInPaid = false, false
-		id, err := repo.Create(ctx, testOwnerID, tr)
+		id, err := createRegisteredTournament(t, ctx, repo, tr)
 		require.NoError(t, err)
 		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 		require.NoError(t, err)
@@ -81,10 +81,10 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
 		tr.Players[0].BuyInPaid, tr.Players[1].BuyInPaid = false, false
-		id, err := repo.Create(ctx, testOwnerID, tr)
+		id, err := createRegisteredTournament(t, ctx, repo, tr)
 		require.NoError(t, err)
 		other := validTournament(t)
-		otherID, err := repo.Create(ctx, testOwnerID, other)
+		otherID, err := createRegisteredTournament(t, ctx, repo, other)
 		require.NoError(t, err)
 
 		locked := make(chan struct{})
@@ -175,7 +175,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 	t.Run("rolls back rejected change and permits the next update", func(t *testing.T) {
 		ctx, _, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, testOwnerID, tr)
+		id, err := createRegisteredTournament(t, ctx, repo, tr)
 		require.NoError(t, err)
 		cause := errors.New("change rejected")
 		got, err := repo.UpdateLocked(ctx, testOwnerID, id, func(current *domain.Tournament) (*domain.Tournament, error) {
@@ -202,7 +202,7 @@ func TestTournamentRepository_UpdateLockedIntegration(t *testing.T) {
 	t.Run("cancels lock wait without changing the card", func(t *testing.T) {
 		ctx, pool, repo := setupTournamentRepositoryTest(t)
 		tr := validTournament(t)
-		id, err := repo.Create(ctx, testOwnerID, tr)
+		id, err := createRegisteredTournament(t, ctx, repo, tr)
 		require.NoError(t, err)
 		tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 		require.NoError(t, err)

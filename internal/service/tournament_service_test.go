@@ -47,6 +47,64 @@ type mockTournamentRepository struct {
 	limit, offset       int
 	tournaments         []*domain.Tournament
 	listErr             error
+	saveCalls           int
+	resolvedPlayers     []domain.TournamentPlayer
+}
+
+func (r *mockTournamentRepository) SaveWithPlayers(ctx context.Context, ownerID, id uuid.UUID, selections []domain.TournamentPlayer, build func([]domain.TournamentPlayer, *domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error) {
+	r.ownerID = ownerID
+	r.saveCalls++
+	var original *domain.Tournament
+	if id != uuid.Nil {
+		if r.getErr != nil {
+			return nil, r.getErr
+		}
+		original = r.getTournament
+	}
+	players := make([]domain.TournamentPlayer, len(selections))
+	for i, selection := range selections {
+		players[i] = selection
+		if selection.ID == uuid.Nil {
+			display, _, err := domain.NormalizePlayerName(selection.Name)
+			if err != nil {
+				return nil, errors.Join(app.ErrValidation, err)
+			}
+			players[i].Name = display
+			players[i].ID = uuid.New()
+		}
+		if original != nil {
+			for _, current := range original.Players {
+				if current.ID == selection.ID {
+					players[i].Name, players[i].IsDeleted = current.Name, current.IsDeleted
+				}
+			}
+		}
+	}
+	if r.resolvedPlayers != nil {
+		players = r.resolvedPlayers
+	}
+	candidate, err := build(players, original)
+	if err != nil {
+		return nil, err
+	}
+	if id == uuid.Nil {
+		created, err := r.Create(ctx, ownerID, candidate)
+		candidate.ID = created
+		return candidate, err
+	}
+	return candidate, r.Update(ctx, ownerID, candidate)
+}
+
+func TestTournamentServiceBuildsInsidePlayerTransaction(t *testing.T) {
+	in := validCreateTournamentInput()
+	resolved := append([]domain.TournamentPlayer(nil), in.Players...)
+	resolved[0].Name = "Registry Name"
+	repo := &mockTournamentRepository{createID: testTournamentID, resolvedPlayers: resolved}
+	_, err := NewTournamentService(repo).CreateTournament(authenticatedContext(), in)
+	require.NoError(t, err)
+	assert.Equal(t, 1, repo.saveCalls)
+	assert.Equal(t, "Registry Name", repo.createdTournament.Players[0].Name)
+	assert.Equal(t, in.Players[0].ID, repo.createdTournament.Players[0].ID)
 }
 
 func (r *mockTournamentRepository) Create(ctx context.Context, ownerID uuid.UUID, tr *domain.Tournament) (uuid.UUID, error) {
@@ -167,8 +225,8 @@ func TestTournamentService_CreateTournament(t *testing.T) {
 		wantErr error
 	}{
 		{"empty name", func(in *CreateTournamentInput) { in.Name = "" }, domain.ErrEmptyName},
-		{"empty player name", func(in *CreateTournamentInput) { in.Players[0].Name = " " }, domain.ErrInvalidPlayerName},
-		{"duplicate normalized names", func(in *CreateTournamentInput) { in.Players[1].Name = " A " }, domain.ErrDuplicatePlayer},
+		{"empty new player name", func(in *CreateTournamentInput) { in.Players[0].ID = uuid.Nil; in.Players[0].Name = " " }, domain.ErrInvalidPlayerName},
+		{"duplicate player ids", func(in *CreateTournamentInput) { in.Players[1].ID = in.Players[0].ID }, domain.ErrDuplicatePlayer},
 		{"empty chip set", func(in *CreateTournamentInput) { in.ChipSet = nil }, domain.ErrEmptyChipSet},
 		{"small stack", func(in *CreateTournamentInput) { in.ChipSet = []domain.ChipDenomination{{Value: 1, Count: 1}} }, domain.ErrSmallStack},
 		{"too few blind levels", func(in *CreateTournamentInput) { in.Duration = 20 * time.Minute }, domain.ErrNotEnoughLevels},
@@ -223,8 +281,8 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, first, second)
 		assert.Equal(t, 2, repo.updateCount)
-		assert.Equal(t, 2, repo.getCount)
-		assert.Equal(t, 2, repo.ordinaryUpdateCount)
+		assert.Zero(t, repo.getCount)
+		assert.Equal(t, 2, repo.saveCalls)
 		assert.False(t, repo.lockedCalled)
 		assert.Zero(t, repo.lockedCount)
 		assert.Len(t, second.Players[0].Rebuys, 2)
@@ -257,7 +315,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		tr, err := NewTournamentService(repo).SaveTournament(authenticatedContext(), testTournamentID, in)
 		require.NoError(t, err)
 		require.NotEmpty(t, tr.CalculateTransfers())
-		assert.Equal(t, "Renamed", tr.CalculateTransfers()[0].To)
+		assert.Equal(t, in.Players[0].ID, tr.CalculateTransfers()[0].To)
 	})
 	t.Run("can replace participants and recomputes generated plans", func(t *testing.T) {
 		in := validSaveTournamentInput()
@@ -277,7 +335,7 @@ func TestTournamentService_SaveTournament(t *testing.T) {
 		change  func(*SaveTournamentInput)
 		wantErr error
 	}{
-		{"player id required", func(in *SaveTournamentInput) { in.Players[0].ID = uuid.Nil }, domain.ErrInvalidPlayerID},
+		{"new player name required", func(in *SaveTournamentInput) { in.Players[0].ID = uuid.Nil; in.Players[0].Name = " " }, domain.ErrInvalidPlayerName},
 		{"rebuy id required", func(in *SaveTournamentInput) { in.Players[0].Rebuys = []domain.Rebuy{{}} }, domain.ErrInvalidRebuyID},
 		{"wrong total", func(in *SaveTournamentInput) { in.Results = []domain.Result{{PlayerID: in.Players[0].ID, Prize: 123}} }, domain.ErrPrizeSumMismatch},
 		{"unknown winner", func(in *SaveTournamentInput) { in.Results = []domain.Result{{PlayerID: uuid.New(), Prize: 4000}} }, domain.ErrPlayerNotFound},

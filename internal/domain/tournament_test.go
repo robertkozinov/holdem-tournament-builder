@@ -28,7 +28,6 @@ func TestNewTournament(t *testing.T) {
 	}{
 		{"empty name", func(tr *Tournament) { tr.Name = " " }, ErrEmptyName},
 		{"one player", func(tr *Tournament) { tr.Players = tr.Players[:1] }, ErrNotEnoughPlayers},
-		{"duplicate name", func(tr *Tournament) { tr.Players[1].Name = tr.Players[0].Name }, ErrDuplicatePlayer},
 		{"empty player name", func(tr *Tournament) { tr.Players[0].Name = " " }, ErrInvalidPlayerName},
 		{"empty player id", func(tr *Tournament) { tr.Players[0].ID = uuid.Nil }, ErrInvalidPlayerID},
 		{"duplicate player id", func(tr *Tournament) { tr.Players[1].ID = tr.Players[0].ID }, ErrDuplicatePlayer},
@@ -110,6 +109,13 @@ func TestNewTournament(t *testing.T) {
 		assert.Equal(t, 5, tr.StartingStack.Distribution[0].Count)
 		assert.Equal(t, int64(50), tr.BlindStructure[0].BigBlind)
 	})
+}
+
+func TestTournamentAllowsSameNameWithDifferentIDs(t *testing.T) {
+	input := tournamentFixture()
+	input.Players[1].Name = input.Players[0].Name
+	_, err := NewTournament(input)
+	require.NoError(t, err)
 }
 
 func trValue(tr *Tournament) Tournament { return *tr }

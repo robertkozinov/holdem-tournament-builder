@@ -69,7 +69,9 @@ func run() error {
 	sessions := redisstore.NewSessionStore(redisClient)
 	authService := service.NewAuthService(users, sessions, &auth.PasswordHasher{}, &auth.SessionTokenGenerator{}, cfg.SessionLifetime)
 	authHandler := transporthttp.NewAuthHandler(authService, transporthttp.CookieOptions{Secure: cfg.CookieSecure}, cfg.RequestSafety)
-	router := transporthttp.NewRouter(tournamentHandler, authHandler)
+	playerService := service.NewPlayerService(postgres.NewPlayerRepository(pool))
+	playerHandler := transporthttp.NewPlayerHandler(playerService)
+	router := transporthttp.NewRouter(tournamentHandler, authHandler, playerHandler)
 
 	server := transporthttp.NewServer(router, cfg.HTTPAddr)
 

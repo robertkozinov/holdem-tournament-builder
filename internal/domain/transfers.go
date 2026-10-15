@@ -1,45 +1,49 @@
 package domain
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/google/uuid"
+)
 
 type Transfer struct {
-	From   string
-	To     string
+	From   uuid.UUID
+	To     uuid.UUID
 	Amount int64
 }
 
 type balance struct {
-	name   string
+	id     uuid.UUID
 	amount int64
 }
 
-func (t *Tournament) balances() map[string]int64 {
-	b := make(map[string]int64)
+func (t *Tournament) balances() map[uuid.UUID]int64 {
+	b := make(map[uuid.UUID]int64)
 	for _, player := range t.Players {
-		b[player.Name] = -(1 + int64(len(player.Rebuys))) * t.BuyInAmount
+		b[player.ID] = -(1 + int64(len(player.Rebuys))) * t.BuyInAmount
 		for _, result := range t.Results {
 			if result.PlayerID == player.ID {
-				b[player.Name] += result.Prize
+				b[player.ID] += result.Prize
 			}
 		}
 	}
 	return b
 }
 
-func minimizeTransfers(balances map[string]int64) []Transfer {
+func minimizeTransfers(balances map[uuid.UUID]int64) []Transfer {
 	var debtors, creditors []balance
 
-	for name, b := range balances {
+	for id, b := range balances {
 		switch {
 		case b < 0:
-			debtors = append(debtors, balance{name, -b})
+			debtors = append(debtors, balance{id, -b})
 		case b > 0:
-			creditors = append(creditors, balance{name, b})
+			creditors = append(creditors, balance{id, b})
 		}
 	}
 
-	sort.Slice(debtors, func(i, j int) bool { return debtors[i].name < debtors[j].name })
-	sort.Slice(creditors, func(i, j int) bool { return creditors[i].name < creditors[j].name })
+	sort.Slice(debtors, func(i, j int) bool { return debtors[i].id.String() < debtors[j].id.String() })
+	sort.Slice(creditors, func(i, j int) bool { return creditors[i].id.String() < creditors[j].id.String() })
 
 	var transfers []Transfer
 	i, j := 0, 0
@@ -47,8 +51,8 @@ func minimizeTransfers(balances map[string]int64) []Transfer {
 		amount := min(debtors[i].amount, creditors[j].amount)
 
 		transfers = append(transfers, Transfer{
-			From:   debtors[i].name,
-			To:     creditors[j].name,
+			From:   debtors[i].id,
+			To:     creditors[j].id,
 			Amount: amount,
 		})
 

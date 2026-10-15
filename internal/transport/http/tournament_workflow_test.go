@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -20,8 +21,65 @@ import (
 
 // The real HTTP and service layers use a snapshot repository without external services.
 type memoryTournamentRepository struct {
-	cards  map[uuid.UUID][]byte
-	owners map[uuid.UUID]uuid.UUID
+	cards   map[uuid.UUID][]byte
+	owners  map[uuid.UUID]uuid.UUID
+	players map[uuid.UUID]map[uuid.UUID]domain.TournamentPlayer
+}
+
+func (r *memoryTournamentRepository) SaveWithPlayers(ctx context.Context, ownerID, id uuid.UUID, selections []domain.TournamentPlayer, build func([]domain.TournamentPlayer, *domain.Tournament) (*domain.Tournament, error)) (*domain.Tournament, error) {
+	var original *domain.Tournament
+	var err error
+	if id != uuid.Nil {
+		original, err = r.GetByID(ctx, ownerID, id)
+		if err != nil {
+			return nil, err
+		}
+	}
+	profiles := make(map[uuid.UUID]domain.TournamentPlayer)
+	for playerID, player := range r.players[ownerID] {
+		profiles[playerID] = player
+	}
+	resolved := append([]domain.TournamentPlayer(nil), selections...)
+	for i, selection := range selections {
+		profile, ok := profiles[selection.ID]
+		if selection.ID == uuid.Nil {
+			display, normalized, err := domain.NormalizePlayerName(selection.Name)
+			if err != nil {
+				return nil, errors.Join(app.ErrValidation, err)
+			}
+			for _, current := range profiles {
+				_, key, _ := domain.NormalizePlayerName(current.Name)
+				if key == normalized {
+					profile, ok = current, true
+					break
+				}
+			}
+			if !ok {
+				profile = domain.TournamentPlayer{ID: uuid.New(), Name: display}
+				profiles[profile.ID] = profile
+			}
+		} else if !ok {
+			return nil, errors.Join(app.ErrPlayerNotFound, domain.ErrPlayerNotFound)
+		}
+		resolved[i].ID, resolved[i].Name = profile.ID, profile.Name
+	}
+	tr, err := build(resolved, original)
+	if err != nil {
+		return nil, err
+	}
+	if id == uuid.Nil {
+		_, err = r.Create(ctx, ownerID, tr)
+	} else {
+		err = r.Update(ctx, ownerID, tr)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if r.players == nil {
+		r.players = make(map[uuid.UUID]map[uuid.UUID]domain.TournamentPlayer)
+	}
+	r.players[ownerID] = profiles
+	return tr, nil
 }
 
 func (r *memoryTournamentRepository) Create(ctx context.Context, ownerID uuid.UUID, tr *domain.Tournament) (uuid.UUID, error) {
@@ -150,7 +208,7 @@ func TestTournamentHTTPWorkflow(t *testing.T) {
 	assert.Equal(t, int64(2500), first.Results[0].Prize)
 	assert.Nil(t, first.Results[0].Place)
 	require.Len(t, first.Transfers, 1)
-	assert.Equal(t, TransferResponse{From: "B", To: "A", Amount: 500}, first.Transfers[0])
+	assert.Equal(t, TransferResponse{From: "B", To: "A", FromPlayerID: initial.Players[1].ID, ToPlayerID: initial.Players[0].ID, Amount: 500}, first.Transfers[0])
 	assert.Equal(t, first, save())
 	assert.Equal(t, first, read(path))
 	assert.Len(t, repo.cards, 1)
@@ -160,7 +218,7 @@ func TestTournamentHTTPWorkflow(t *testing.T) {
 	require.Len(t, corrected.Results, 1)
 	assert.Equal(t, "B", corrected.Results[0].Name)
 	assert.Equal(t, int64(1000), corrected.BuyInAmount)
-	assert.Equal(t, TransferResponse{From: "A", To: "B", Amount: 2000}, corrected.Transfers[0])
+	assert.Equal(t, TransferResponse{From: "A", To: "B", FromPlayerID: initial.Players[0].ID, ToPlayerID: initial.Players[1].ID, Amount: 2000}, corrected.Transfers[0])
 	req.SettlementMode = "bank"
 	bank := save()
 	assert.Empty(t, bank.Transfers)
@@ -290,12 +348,12 @@ func TestTournamentHTTPRejectsDuplicateChipValues(t *testing.T) {
 	}{
 		{
 			name:    "two identical rows for four players",
-			players: []PlayerRequest{{ID: uuid.New(), Name: "A"}, {ID: uuid.New(), Name: "B"}, {ID: uuid.New(), Name: "C"}, {ID: uuid.New(), Name: "D"}},
+			players: []PlayerRequest{{Name: "A"}, {Name: "B"}, {Name: "C"}, {Name: "D"}},
 			chips:   []ChipRequest{{Value: 500, Count: 40}, {Value: 500, Count: 40}},
 		},
 		{
 			name:    "many rows for two players",
-			players: []PlayerRequest{{ID: uuid.New(), Name: "A"}, {ID: uuid.New(), Name: "B"}},
+			players: []PlayerRequest{{Name: "A"}, {Name: "B"}},
 			chips:   manyChips,
 		},
 	}
