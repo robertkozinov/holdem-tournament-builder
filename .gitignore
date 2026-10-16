@@ -10,3 +10,4 @@ bin/
 coverage.out
 output/
 docs/
+.superpowers/

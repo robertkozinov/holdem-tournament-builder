@@ -40,7 +40,7 @@ func TestProtectedRoutesRejectInvalidCookiesBeforeService(t *testing.T) {
 					called := false
 					h, _ := authRouter(&fakeAuthService{authenticate: func(context.Context, string, time.Time) (uuid.UUID, error) { called = true; return testUserID, nil }}, secure)
 					s := &mockTournamentService{}
-					router := NewRouter(NewTournamentHandler(s), h, NewPlayerHandler(&playerServiceStub{}))
+					router := NewRouter(NewTournamentHandler(s), h, NewPlayerHandler(&playerServiceStub{}), newStatisticsTestHandler())
 					r := httptest.NewRequest(route.method, route.path, strings.NewReader("{}"))
 					r.Header.Set("Cookie", header)
 					w := httptest.NewRecorder()
@@ -69,7 +69,7 @@ func TestSessionFailuresNeverReachProtectedHandler(t *testing.T) {
 			for _, route := range protectedRoutes() {
 				h, _ := authRouter(&fakeAuthService{authenticate: func(context.Context, string, time.Time) (uuid.UUID, error) { return tt.id, tt.err }}, false)
 				s := &mockTournamentService{}
-				w := authRequest(NewRouter(NewTournamentHandler(s), h, NewPlayerHandler(&playerServiceStub{})), route.method, route.path, "{}", &http.Cookie{Name: "holdem_session", Value: "test-session"})
+				w := authRequest(NewRouter(NewTournamentHandler(s), h, NewPlayerHandler(&playerServiceStub{}), newStatisticsTestHandler()), route.method, route.path, "{}", &http.Cookie{Name: "holdem_session", Value: "test-session"})
 				assert.Equal(t, tt.status, w.Code)
 				assert.NotContains(t, w.Body.String(), "private redis detail")
 				assert.False(t, s.createCalled || s.getCalled || s.saveCalled || s.patchCalled || s.deleteCalled || s.listCalled)
@@ -92,12 +92,12 @@ func TestUnknownAndRemovedRoutesRemainPublic404(t *testing.T) {
 
 func TestRouterRequiresAuthHandler(t *testing.T) {
 	assert.Panics(t, func() {
-		NewRouter(NewTournamentHandler(&mockTournamentService{}), nil, NewPlayerHandler(&playerServiceStub{}))
+		NewRouter(NewTournamentHandler(&mockTournamentService{}), nil, NewPlayerHandler(&playerServiceStub{}), newStatisticsTestHandler())
 	})
 }
 
 func TestProtectedTournamentResponsesAreNotCached(t *testing.T) {
-	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), NewAuthHandler(&fakeAuthService{}, CookieOptions{}, config.DefaultRequestSafety()), NewPlayerHandler(&playerServiceStub{}))
+	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), NewAuthHandler(&fakeAuthService{}, CookieOptions{}, config.DefaultRequestSafety()), NewPlayerHandler(&playerServiceStub{}), newStatisticsTestHandler())
 	for _, tc := range []struct {
 		name    string
 		cookies []*http.Cookie
@@ -131,7 +131,7 @@ func TestCrossOriginUnsafeRoutes(t *testing.T) {
 					value = "cross-site"
 				}
 				r.Header.Set(header, value)
-				NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{})).ServeHTTP(w, r)
+				NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{}), newStatisticsTestHandler()).ServeHTTP(w, r)
 				require.Equal(t, 403, w.Code)
 				assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
 				assert.False(t, called)
@@ -193,7 +193,7 @@ func TestRouterOwnerIsolationWithRealTournamentService(t *testing.T) {
 	}}
 	h, _ := authRouter(s, false)
 	repo := &memoryTournamentRepository{cards: make(map[uuid.UUID][]byte)}
-	router := NewRouter(NewTournamentHandler(service.NewTournamentService(repo)), h, NewPlayerHandler(&playerServiceStub{}))
+	router := NewRouter(NewTournamentHandler(service.NewTournamentService(repo)), h, NewPlayerHandler(&playerServiceStub{}), newStatisticsTestHandler())
 	request := func(method, path, body, token string, status int) *httptest.ResponseRecorder {
 		t.Helper()
 		w := authRequest(router, method, path, body, &http.Cookie{Name: "holdem_session", Value: token})

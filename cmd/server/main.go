@@ -71,7 +71,9 @@ func run() error {
 	authHandler := transporthttp.NewAuthHandler(authService, transporthttp.CookieOptions{Secure: cfg.CookieSecure}, cfg.RequestSafety)
 	playerService := service.NewPlayerService(postgres.NewPlayerRepository(pool))
 	playerHandler := transporthttp.NewPlayerHandler(playerService)
-	router := transporthttp.NewRouter(tournamentHandler, authHandler, playerHandler)
+	statisticsService := service.NewStatisticsService(postgres.NewStatisticsRepository(pool))
+	statisticsHandler := transporthttp.NewStatisticsHandler(statisticsService)
+	router := transporthttp.NewRouter(tournamentHandler, authHandler, playerHandler, statisticsHandler)
 
 	server := transporthttp.NewServer(router, cfg.HTTPAddr)
 

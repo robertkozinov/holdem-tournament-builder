@@ -48,6 +48,7 @@ func TestPlayerRegistryHTTP_Integration(t *testing.T) {
 		transport.NewTournamentHandler(service.NewTournamentService(NewTournamentRepository(pool))),
 		transport.NewAuthHandler(&registryHTTPAuth{owners: map[uuid.UUID]bool{owner: true, foreign: true}}, transport.CookieOptions{}, config.DefaultRequestSafety()),
 		transport.NewPlayerHandler(service.NewPlayerService(profiles)),
+		transport.NewStatisticsHandler(service.NewStatisticsService(NewStatisticsRepository(pool))),
 	)
 	server := httptest.NewServer(router)
 	t.Cleanup(server.Close)
