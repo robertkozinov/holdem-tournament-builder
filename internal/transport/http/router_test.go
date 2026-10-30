@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"holdem-tournament-builder/internal/config"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,4 +57,13 @@ func TestNewRouter(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestRouterRequiresStatisticsHandler(t *testing.T) {
+	auth := NewAuthHandler(&fakeAuthService{}, CookieOptions{}, config.DefaultRequestSafety())
+	tournaments := NewTournamentHandler(&mockTournamentService{})
+	players := NewPlayerHandler(&playerServiceStub{})
+
+	assert.Panics(t, func() { NewRouter(tournaments, auth, players, nil) })
+	assert.Panics(t, func() { NewRouter(tournaments, auth, players, NewStatisticsHandler(nil)) })
 }

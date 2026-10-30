@@ -162,7 +162,7 @@ func TestPlayerRoutes_Protected(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					ps := &playerServiceStub{}
 					accounts := &fakeAuthService{authenticate: func(context.Context, string, time.Time) (uuid.UUID, error) { return testUserID, tc.authErr }}
-					router := NewRouter(NewTournamentHandler(&mockTournamentService{}), NewAuthHandler(accounts, CookieOptions{}, config.DefaultRequestSafety()), NewPlayerHandler(ps))
+					router := NewRouter(NewTournamentHandler(&mockTournamentService{}), NewAuthHandler(accounts, CookieOptions{}, config.DefaultRequestSafety()), NewPlayerHandler(ps), newStatisticsTestHandler())
 					r := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
 					if tc.cookie != "" {
 						r.AddCookie(&http.Cookie{Name: "holdem_session", Value: tc.cookie})
@@ -188,7 +188,7 @@ func TestPlayerRoutes_RateLimitBeforeSessionLookup(t *testing.T) {
 	safety.General.Burst = 1
 	h := NewAuthHandler(accounts, CookieOptions{}, safety)
 	h.now = func() time.Time { return time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC) }
-	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{}))
+	router := NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(&playerServiceStub{}), newStatisticsTestHandler())
 	for _, status := range []int{200, 429} {
 		r := httptest.NewRequest("GET", "/players", nil)
 		r.AddCookie(&http.Cookie{Name: "holdem_session", Value: "token"})
@@ -201,6 +201,8 @@ func TestPlayerRoutes_RateLimitBeforeSessionLookup(t *testing.T) {
 
 func TestRouterRequiresPlayerHandler(t *testing.T) {
 	h := NewAuthHandler(&fakeAuthService{}, CookieOptions{}, config.DefaultRequestSafety())
-	assert.Panics(t, func() { NewRouter(NewTournamentHandler(&mockTournamentService{}), h, nil) })
-	assert.Panics(t, func() { NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(nil)) })
+	assert.Panics(t, func() { NewRouter(NewTournamentHandler(&mockTournamentService{}), h, nil, newStatisticsTestHandler()) })
+	assert.Panics(t, func() {
+		NewRouter(NewTournamentHandler(&mockTournamentService{}), h, NewPlayerHandler(nil), newStatisticsTestHandler())
+	})
 }

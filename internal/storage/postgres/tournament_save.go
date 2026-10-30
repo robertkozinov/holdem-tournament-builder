@@ -100,11 +100,23 @@ func syncTournamentPlayers(ctx context.Context, tx pgx.Tx, owner uuid.UUID, card
 	if _, err := tx.Exec(ctx, `DELETE FROM tournament_players WHERE tournament_id = $1 AND user_id = $2`, card.ID, owner); err != nil {
 		return fmt.Errorf("clear tournament players: %w", err)
 	}
-	ids := make([]uuid.UUID, len(card.Players))
-	for i, player := range card.Players {
-		ids[i] = player.ID
+	projections := tournamentPlayerProjections(card)
+	ids := make([]uuid.UUID, len(projections))
+	contributions := make([]int64, len(projections))
+	prizes := make([]int64, len(projections))
+	for i, projection := range projections {
+		ids[i] = projection.playerID
+		contributions[i] = projection.contribution
+		prizes[i] = projection.prize
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO tournament_players (tournament_id, player_id, user_id) SELECT $1, player_id, $3 FROM unnest($2::uuid[]) AS player_id`, card.ID, ids, owner); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO tournament_players (
+		tournament_id, player_id, user_id,
+		contribution, prize, included_in_statistics
+	)
+	SELECT $1, projection.player_id, $5,
+		projection.contribution, projection.prize, $6
+	FROM unnest($2::uuid[], $3::bigint[], $4::bigint[])
+		AS projection(player_id, contribution, prize)`, card.ID, ids, contributions, prizes, owner, card.HasResults()); err != nil {
 		return fmt.Errorf("link tournament players: %w", err)
 	}
 	return nil

@@ -8,12 +8,15 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-func NewRouter(handler *TournamentHandler, auth *AuthHandler, players *PlayerHandler) http.Handler {
+func NewRouter(handler *TournamentHandler, auth *AuthHandler, players *PlayerHandler, statistics *StatisticsHandler) http.Handler {
 	if auth == nil || auth.service == nil {
 		panic("auth handler is required")
 	}
 	if players == nil || players.service == nil {
 		panic("player handler is required")
+	}
+	if statistics == nil || statistics.service == nil {
+		panic("statistics handler is required")
 	}
 	r := chi.NewRouter()
 
@@ -36,6 +39,7 @@ func NewRouter(handler *TournamentHandler, auth *AuthHandler, players *PlayerHan
 	protected.Get("/players", players.ListPlayers)
 	protected.Patch("/players/{player_id}", players.RenamePlayer)
 	protected.Delete("/players/{player_id}", players.DeletePlayer)
+	protected.Get("/statistics/leaderboard", statistics.Leaderboard)
 	protected.Post("/tournaments", handler.CreateTournament)
 	protected.Get("/tournaments", handler.ListTournaments)
 	protected.Get("/tournaments/{id}", handler.GetTournamentByID)
